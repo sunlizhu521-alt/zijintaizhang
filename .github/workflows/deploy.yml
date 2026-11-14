@@ -1,0 +1,108 @@
+name: Verify and Deploy Zijintaizhang
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zijintaizhang-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  verify-and-deploy:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          architecture: x64
+          check-latest: true
+          cache: npm
+      - name: Install locked dependencies
+        run: npm ci --ignore-scripts
+      - name: Run tests
+        run: npm test
+      - name: Build frontend
+        run: npm run build
+      - name: Package verified release with isolated Node runtime
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ci --omit=dev --ignore-scripts
+          export RELEASE_STAGE="$RUNNER_TEMP/zijintaizhang-$GITHUB_SHA"
+          mkdir -p "$RELEASE_STAGE/runtime"
+          cp -R dist server shared scripts node_modules "$RELEASE_STAGE/"
+          cp package.json package-lock.json ecosystem.config.cjs "$RELEASE_STAGE/"
+          rm -rf "$RELEASE_STAGE/node_modules/.bin"
+          if [ -n "$(find "$RELEASE_STAGE" -type l -print -quit)" ]; then
+            echo 'Release packages must not contain symbolic links.' >&2
+            exit 1
+          fi
+          cp "$(node -p 'process.execPath')" "$RELEASE_STAGE/runtime/node"
+          chmod 755 "$RELEASE_STAGE/runtime/node"
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          import path from 'node:path';
+          import { createHash } from 'node:crypto';
+          const stage = process.env.RELEASE_STAGE;
+          const manifest = {
+            commit: process.env.GITHUB_SHA, nodeVersion: process.version,
+            platform: process.platform, arch: process.arch,
+            runtimeSha256: createHash('sha256').update(fs.readFileSync(path.join(stage, 'runtime/node'))).digest('hex'),
+          };
+          if (manifest.platform !== 'linux' || manifest.arch !== 'x64') throw new Error('Expected Linux x64 build runner');
+          fs.writeFileSync(path.join(stage, 'release.json'), JSON.stringify(manifest) + '\n');
+          NODE
+          tar -czf "$RUNNER_TEMP/zijintaizhang-$GITHUB_SHA.tar.gz" -C "$RELEASE_STAGE" \
+            dist server shared scripts node_modules runtime package.json package-lock.json ecosystem.config.cjs release.json
+      - name: Deploy through restricted SSH receiver
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        shell: bash
+        env:
+          DEPLOY_HOST: ${{ vars.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ vars.DEPLOY_USER }}
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          [[ "$DEPLOY_HOST" =~ ^[A-Za-z0-9][A-Za-z0-9.-]+$ && "$DEPLOY_USER" =~ ^[a-z_][a-z0-9_-]*$ ]]
+          [[ -n "$DEPLOY_SSH_KEY" && -n "$DEPLOY_KNOWN_HOSTS" ]]
+          key="$RUNNER_TEMP/zijintaizhang-deploy-key"
+          known_hosts="$RUNNER_TEMP/zijintaizhang-known-hosts"
+          trap 'rm -f "$key" "$known_hosts"' EXIT
+          umask 077
+          printf '%s\n' "$DEPLOY_SSH_KEY" > "$key"
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > "$known_hosts"
+          ssh -i "$key" -o BatchMode=yes -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$known_hosts" \
+            -o ConnectTimeout=15 -o ServerAliveInterval=15 -o ServerAliveCountMax=3 \
+            "$DEPLOY_USER@$DEPLOY_HOST" "deploy $GITHUB_SHA" \
+            < "$RUNNER_TEMP/zijintaizhang-$GITHUB_SHA.tar.gz"
+      - name: Verify public HTTPS release and homepage
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error --max-time 15 --retry 3 \
+            'https://129.211.9.242/zijintaizhang/api/health' > "$RUNNER_TEMP/zijintaizhang-health.json"
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          const health = JSON.parse(fs.readFileSync(`${process.env.RUNNER_TEMP}/zijintaizhang-health.json`, 'utf8'));
+          if (health.status !== 'ok' || health.app !== 'zijintaizhang' || health.release !== process.env.GITHUB_SHA) throw new Error('Public release health check failed');
+          NODE
+          curl --fail --silent --show-error --max-time 15 \
+            'https://129.211.9.242/zijintaizhang/' > "$RUNNER_TEMP/zijintaizhang-home.html"
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          const html = fs.readFileSync(`${process.env.RUNNER_TEMP}/zijintaizhang-home.html`, 'utf8');
+          if (!html.includes('<title>资金台账</title>') || !html.includes('/zijintaizhang/assets/')) throw new Error('Public homepage check failed');
+          NODE
