@@ -1,10 +1,10 @@
 import { useState } from 'react';
-import { CATEGORIES, SLOTS } from '../shared/constants.js';
+import { CATEGORIES, LEDGER_CATEGORIES, SLOTS } from '../shared/constants.js';
 import { download, queryString, useResource } from './api.js';
 import { can, dateTime, money, monthText, upcomingMonths } from './format.js';
 import { Empty, ErrorNotice, IssuesTable, Loading, Notice, RecordsTable } from './components.jsx';
 
-const categoryKeys = ['normal', 'negotiated', 'shipment', 'after_sales', 'unregistered'];
+const categoryKeys = Object.keys(CATEGORIES);
 const newFilters = () => ({ ...upcomingMonths(), supplier: '', payer: '', owner: '', category: '', month: '' });
 
 export default function Dashboard({ user }) {
@@ -27,7 +27,7 @@ export default function Dashboard({ user }) {
   }
   const slots = data?.slots || [];
   const hasSlot = id => Boolean(slots.find(slot => slot.id === id)?.currentVersionId);
-  const hasCategory = category => hasSlot(['normal', 'negotiated'].includes(category) ? 'schedule' : category);
+  const hasCategory = category => hasSlot(LEDGER_CATEGORIES.includes(category) ? 'schedule' : category);
   const sourceAmount = (slotId, cents) => hasSlot(slotId) ? `${money(cents)} 元` : '未上传';
   const summary = data?.summary || {};
   const pendingView = filters.month === 'pending';
@@ -51,11 +51,11 @@ export default function Dashboard({ user }) {
       <div className="slot-status-strip" aria-label="数据文件状态">{SLOTS.map(slot => { const state = slots.find(value => value.id === slot.id); return <div key={slot.id}><span className={`status-dot ${state?.currentVersionId ? 'ready' : ''}`} /><strong>{slot.label}</strong><span>{state?.currentVersionId ? dateTime(state.uploadedAt || state.updatedAt) : '尚未上传'}</span></div>; })}</div>
       {slots.every(slot => !slot.currentVersionId) && <Notice>尚无有效业务文件。请由有上传权限的人员在“文件管理”上传付款节奏和三类预估。</Notice>}
       <div className="metric-grid">
-        {metric(pendingView ? '时间待定付款计划' : '选定期间付款计划', hasSlot('schedule') ? pendingView ? summary.pendingPlanCents : summary.planCents : null, '正常付款与谈判付款的计划金额', true)}
+        {metric(pendingView ? '时间待定付款计划' : '选定期间付款计划', hasSlot('schedule') ? pendingView ? summary.pendingPlanCents : summary.planCents : null, '谈判表两类付款与正常付款的计划金额', true)}
         {metric('台账累计已付', hasSlot('schedule') ? summary.paidCents : null, `不受月份筛选影响${summary.missingPaidCount ? ` · ${summary.missingPaidCount} 条未提供已付金额` : ''}`)}
         {metric('台账剩余金额', hasSlot('schedule') ? summary.remainingCents : null, `不受月份筛选影响${summary.missingRemainingCount ? ` · ${summary.missingRemainingCount} 条未提供剩余金额` : ''}`)}
       </div>
-      <p className="scope-note">累计已付与剩余金额按供应商、付款主体、跟单员及类别筛选后统计，共 {summary.ledgerRecordCount || 0} 条台账记录。流程归档不自动视为已付款。</p>
+      <p className="scope-note">累计已付与剩余金额按供应商、付款主体、跟单员及类别筛选后统计，共 {summary.ledgerRecordCount || 0} 条台账记录。金额为空或公式无已保存计算结果时按 0 计入。流程归档不自动视为已付款。</p>
       <div className="forecast-grid">{['shipment', 'after_sales', 'unregistered'].map(key => metric(CATEGORIES[key], hasSlot(key) ? (pendingView ? summary.pendingForecastCents?.[key] : summary.forecastCents?.[key]) : null, `${pendingView ? '时间待定' : '选定期间'}预估 · 独立展示`))}</div>
       {!pendingView && data.months?.some(row => row.month === 'pending') && <Notice type="warning">另有时间待定记录，未计入上方期间金额。付款计划：{sourceAmount('schedule', summary.pendingPlanCents)}；发货计划预估：{sourceAmount('shipment', summary.pendingForecastCents?.shipment)}；售后配件预估：{sourceAmount('after_sales', summary.pendingForecastCents?.after_sales)}；已发货未登记预估：{sourceAmount('unregistered', summary.pendingForecastCents?.unregistered)}。<button className="text-button" onClick={() => changePeriod('pending')}>查看时间待定记录</button></Notice>}
       <section className="panel">

@@ -42,13 +42,13 @@ export default function Files({ user }) {
   }
   return <div className="page-stack">
     <div className="page-heading"><div><p className="eyebrow">四个槽位 · 独立更新</p><h1>文件管理</h1><p className="subtitle">在 Excel 修改业务数据，上传校验后替换当前版本。</p></div><button onClick={() => setRefresh(value => value + 1)} disabled={loading || Boolean(busy)}>刷新状态</button></div>
-    <Notice>付款节奏同时读取“谈判付款”和“正常付款”。三个预估槽位采用统一预算格式，各自上传实际数据。</Notice>
+    <Notice>“谈判付款”按“是否谈判分批”分为谈判表-谈判付款（是）和谈判表-正常付款（否）；“正常付款”单独归类。三个预估槽位各自上传实际数据。</Notice>
     <ErrorNotice error={error || (!preview ? actionError : null)} /><Notice type="success">{message}</Notice>
     {loading ? <Loading /> : <div className="file-grid">{SLOTS.map(definition => {
       const slot = { ...definition, ...slots.find(value => value.id === definition.id) };
       return <section className="panel file-card" key={slot.id}>
         <div className="file-card-heading"><span className="file-icon" aria-hidden="true">X</span><div><h2>{slot.label}</h2><span className={`tag ${slot.currentVersionId ? 'success' : 'neutral'}`}>{slot.currentVersionId ? '已有有效版本' : '尚未上传'}</span></div></div>
-        <p className="file-description">{slot.id === 'schedule' ? '一个工作簿，两类付款数据。必须包含谈判付款、正常付款。' : '按人员工作表读取预估月份、供应商、付款主体、金额和备注。'}</p>
+        <p className="file-description">{slot.id === 'schedule' ? '一个工作簿，三类付款数据。必须包含谈判付款、正常付款；谈判表须填写“是否谈判分批”。' : '按人员工作表读取预估月份、供应商、付款主体、金额和备注。'}</p>
         {slot.currentVersionId ? <><div className="file-name" title={slot.filename}>{slot.filename}</div><dl className="file-metadata"><div><dt>上传人</dt><dd>{slot.uploadedBy || '—'}</dd></div><div><dt>上传时间</dt><dd>{dateTime(slot.uploadedAt)}</dd></div><div><dt>有效记录</dt><dd>{slot.recordCount ?? 0} 条</dd></div><div><dt>待核对</dt><dd>{slot.issueCount ?? 0} 项</dd></div></dl></> : <div className="file-placeholder">上传后显示文件版本与数据状态</div>}
         <div className="file-actions">
           {can(user, 'upload') && <><input ref={node => { inputs.current[slot.id] = node; }} type="file" accept=".xlsx" className="sr-only" id={`upload-${slot.id}`} onChange={event => upload(slot, event.target.files[0])} /><button className="primary" disabled={Boolean(busy)} onClick={() => inputs.current[slot.id]?.click()}>{busy === slot.id ? '正在读取…' : slot.currentVersionId ? '上传新版本' : '上传文件'}</button></>}
@@ -56,7 +56,7 @@ export default function Files({ user }) {
         </div>
       </section>;
     })}</div>}
-    <p className="scope-note">仅支持 .xlsx，单文件不超过 20 MB。文件校验失败时，当前有效数据保持不变。文件时间均按北京时间显示。</p>
+    <p className="scope-note">仅支持 .xlsx，单文件不超过 20 MB。金额为空或公式无已保存计算结果时按 0 保存；其他校验失败时，当前有效数据保持不变。文件时间均按北京时间显示。</p>
     {preview && <Modal title={`校验并替换 · ${preview.slot.label}`} onClose={() => { if (!busy) { setPreview(null); setActionError(null); } }} wide>
       <p className="file-name">{preview.filename}</p>
       <Notice>确认读取的工作表后，点击“校验并替换”。系统会重新校验并整体更新这个槽位，旧文件保留在版本记录中。</Notice>

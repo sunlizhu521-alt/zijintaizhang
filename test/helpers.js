@@ -93,8 +93,8 @@ export async function appFixture(t, options = {}) {
 export async function syntheticSchedule() {
   const workbook = new ExcelJS.Workbook();
   const negotiated = workbook.addWorksheet('谈判付款');
-  negotiated.addRow(['创跟单员', '供应商', '付款主体', '对公付款0A流程号', '摘要', 'OA-申请付款金额', '应付款时间', '已付金额', '剩余付款金额', '是否结清', '流程状态', '2026年11月支付', '2026年12月支付', '备注']);
-  negotiated.addRow(['甲', '合成供应商甲', '合成主体', 'MDST-DGFK20261101001', '=1+1', 1000, '2026-11-01', 250, 750, '否', '未归档', 600, 400, '']);
+  negotiated.addRow(['创跟单员', '供应商', '付款主体', '对公付款0A流程号', '摘要', 'OA-申请付款金额', '应付款时间', '已付金额', '剩余付款金额', '是否结清', '流程状态', '2026年11月支付', '2026年12月支付', '备注', '是否谈判分批']);
+  negotiated.addRow(['甲', '合成供应商甲', '合成主体', 'MDST-DGFK20261101001', '=1+1', 1000, '2026-11-01', 250, 750, '否', '未归档', 600, 400, '', '是']);
   const normal = workbook.addWorksheet('正常付款');
   normal.addRow(['跟单员', '供应商名称', '付款主体', '对公付款0A流程号', '摘要', '本次申请付款金额', '应付时间', '已付金额', '剩余金额', '是否结清', '流程状态']);
   normal.addRow(['乙', '合成供应商乙', '合成主体', 'MDST-DGFK20261101002', '正常款', 200, '2026年11月05日', 200, 0, '是', '归档']);

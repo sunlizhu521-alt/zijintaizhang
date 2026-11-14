@@ -1,5 +1,5 @@
 import ExcelJS from 'exceljs';
-import { CATEGORIES } from '../shared/constants.js';
+import { CATEGORIES, LEDGER_CATEGORIES } from '../shared/constants.js';
 
 function makeSheet(book, name, columns, rows) {
   const sheet = book.addWorksheet(name, { views: [{ state: 'frozen', ySplit: 1 }] });
@@ -26,7 +26,7 @@ export async function dashboardExport(data) {
   const amount = (slotId, cents) => uploaded.has(slotId) ? (cents ?? 0) / 100 : '未上传';
   makeSheet(book, '月度计划', [['月份', 'month'], ...Object.entries(CATEGORIES).map(([id, name]) => [name, id, 24])],
     data.months.map(m => ({ month: !m.month || m.month === 'pending' ? '时间待定' : m.month,
-      ...Object.fromEntries(Object.keys(CATEGORIES).map(k => [k, amount(k === 'normal' || k === 'negotiated' ? 'schedule' : k, m[k])])) })));
+      ...Object.fromEntries(Object.keys(CATEGORIES).map(k => [k, amount(LEDGER_CATEGORIES.includes(k) ? 'schedule' : k, m[k])])) })));
   makeSheet(book, '筛选明细', [
     ['类别', 'category'], ['供应商', 'supplier', 34], ['付款主体', 'payer', 24], ['跟单员', 'owner'],
     ['选定期间计划金额', 'plan', 24], ['原台账申请金额', 'amount', 24], ['原台账累计已付', 'paid', 24], ['原台账剩余金额', 'remaining', 24],
@@ -46,6 +46,7 @@ export async function dashboardExport(data) {
     { name: '台账累计已付（已知）', value: amount('schedule', data.summary.paidCents) },
     { name: '台账剩余金额（已知）', value: amount('schedule', data.summary.remainingCents) },
     { name: '累计金额范围', value: '已付、剩余受供应商、主体、人员和类别筛选影响，不受月份筛选；不按月份分摊部分已付款。' },
+    { name: '金额空值口径', value: '金额为空或公式没有已保存计算结果时按0计入；不重新计算公式。' },
     { name: '缺失已付记录数', value: uploaded.has('schedule') ? String(data.summary.missingPaidCount) : '未上传' },
     { name: '缺失剩余记录数', value: uploaded.has('schedule') ? String(data.summary.missingRemainingCount) : '未上传' },
     { name: '预估与付款计划', value: '三类预估分别展示，可能与付款计划重复，未经核对不直接相加。' },

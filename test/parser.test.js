@@ -5,7 +5,7 @@ import ExcelJS from 'exceljs';
 import { inspectWorkbook, parseWorkbook, parseDate, parseMoney } from '../server/parser.js';
 
 const forecastHeaders = ['预估付款月份', '供应商名称', '付款主体', '摘要', '申请付款金额', '账期', '备注'];
-const negotiatedHeaders = ['创跟单员', '供应商', '付款主体', '对公付款0A流程号', '摘要', 'OA-申请付款金额', '应付款时间', '已付金额', '剩余付款金额', '是否结清', '流程状态', '2026年11月支付', '2026年12月支付', '备注'];
+const negotiatedHeaders = ['创跟单员', '供应商', '付款主体', '对公付款0A流程号', '摘要', 'OA-申请付款金额', '应付款时间', '已付金额', '剩余付款金额', '是否结清', '流程状态', '2026年11月支付', '2026年12月支付', '备注', '是否谈判分批'];
 const normalHeaders = ['跟单员', '供应商名称', '付款主体', '对公付款0A流程号', '摘要', '本次申请付款金额', '应付时间', '已付金额', '剩余金额', '是否结清', '流程状态'];
 
 async function asBuffer(workbook) { return Buffer.from(await workbook.xlsx.writeBuffer()); }
@@ -19,7 +19,7 @@ function scheduleBook() {
   const workbook = new ExcelJS.Workbook();
   const negotiated = workbook.addWorksheet('谈判付款');
   negotiated.addRow(negotiatedHeaders);
-  negotiated.addRow(['甲', '样例供应商甲', '示例主体', 'MDST-DGFK20261101001', '分期款', 1234.56, 46327, 200, 1034.56, '否', '未归档', 500, 734.56, '原备注']);
+  negotiated.addRow(['甲', '样例供应商甲', '示例主体', 'MDST-DGFK20261101001', '分期款', 1234.56, 46327, 200, 1034.56, '否', '未归档', 500, 734.56, '原备注', '是']);
   const normal = workbook.addWorksheet('正常付款');
   normal.addRow(normalHeaders);
   normal.addRow(['乙', '样例供应商乙', '示例主体', 'MDST-DGFK20261101002', '正常款', '1,000.00', '2026年11月15日', null, 1000, '', '归档']);
@@ -48,7 +48,7 @@ test('日期支持 Excel 序号、1904 系统、文本、时间戳和跨年，�
   for (const invalid of ['11月', '/', '2026-02-30', '2026年13月', null]) assert.equal(parseDate(invalid), null);
 });
 
-test('付款节奏读取两张指定表，月计划不按申请日期归月，空已付不推断归档为支付', async () => {
+test('付款节奏读取两张指定表，月计划不按申请日期归月，空已付记零但不推断归档为支付', async () => {
   const { workbook, negotiated } = scheduleBook();
   negotiated.getCell('N2').note = '11月核对备注';
   const parsed = await parseWorkbook(await asBuffer(workbook), { slotId: 'schedule' });
@@ -58,9 +58,9 @@ test('付款节奏读取两张指定表，月计划不按申请日期归月，�
   assert.equal(first.amountCents, 123456);
   assert.deepEqual(first.plans, [{ month: '2026-11', amountCents: 50000 }, { month: '2026-12', amountCents: 73456 }]);
   assert.equal(first.comments.N2, '11月核对备注');
-  assert.equal(parsed.records[1].paidCents, null);
+  assert.equal(parsed.records[1].paidCents, 0);
   assert.equal(parsed.records[1].remainingCents, 100000);
-  assert.ok(parsed.issues.some(issue => issue.code === 'MISSING_PAID'));
+  assert.ok(!parsed.issues.some(issue => issue.code === 'MISSING_PAID'));
   assert.ok(parsed.issues.some(issue => issue.code === 'STATUS_CONFLICT'));
 });
 
@@ -96,16 +96,72 @@ test('格式化到 XFD 的空单元格不会扩大字段，缺月份和负金额
   assert.ok(parsed.issues.some(issue => issue.code === 'NEGATIVE_AMOUNT'));
 });
 
-test('公式只读已保存结果，缺失计算结果和无效金额拒绝激活并提供行列位置', async () => {
+test('金额公式读取保存结果，空金额和无结果公式记零，非法金额仍指出行列位置', async () => {
   const workbook = new ExcelJS.Workbook();
   const sheet = forecastSheet(workbook, '甲', [['2026-11-01', '供应商甲', '主体', '预估', { formula: '10+20', result: 30 }, '', '']]);
   assert.equal((await parseWorkbook(await asBuffer(workbook), { slotId: 'shipment' })).records[0].amountCents, 3000);
   sheet.getCell('E2').value = { formula: '10-10', result: 0 };
   assert.equal((await parseWorkbook(await asBuffer(workbook), { slotId: 'shipment' })).records[0].amountCents, 0);
+  for (const value of [null, '', '  ', { formula: '10+20' }, { formula: '""', result: '' }]) {
+    sheet.getCell('E2').value = value;
+    const parsed = await parseWorkbook(await asBuffer(workbook), { slotId: 'shipment' });
+    assert.equal(parsed.records.length, 1);
+    assert.equal(parsed.records[0].amountCents, 0);
+    assert.deepEqual(parsed.records[0].plans, [{ month: '2026-11', amountCents: 0 }]);
+  }
+  for (const value of ['一千', { formula: '1/0', result: { error: '#DIV/0!' } }]) {
+    sheet.getCell('E2').value = value;
+    await assert.rejects(parseWorkbook(await asBuffer(workbook), { slotId: 'shipment' }), error => error.status === 422 && error.issues.some(issue => issue.sourceRow === 2 && issue.message.includes('E2')));
+  }
   sheet.getCell('E2').value = { formula: '10+20' };
-  await assert.rejects(parseWorkbook(await asBuffer(workbook), { slotId: 'shipment' }), error => error.status === 422 && error.issues[0].sourceRow === 2 && error.issues[0].message.includes('E2'));
-  sheet.getCell('E2').value = '一千';
-  await assert.rejects(parseWorkbook(await asBuffer(workbook), { slotId: 'shipment' }), error => error.issues[0].message.includes('E2'));
+  sheet.addRow(['2026-11-01', '供应商乙', '主体', '共享公式', { sharedFormula: 'E2' }, '', '']);
+  const shared = await parseWorkbook(await asBuffer(workbook), { slotId: 'shipment' });
+  assert.deepEqual(shared.records.map(record => record.amountCents), [0, 0]);
+});
+
+test('谈判表按是否谈判分批区分两类，否仍按月支付列取计划，正常付款表不受其标记影响', async () => {
+  const { workbook, negotiated, normal } = scheduleBook();
+  negotiated.addRow(['丙', '样例供应商丙', '示例主体', 'MDST-DGFK20261101003', '非分批款', 90, '2027-01-01', 0, 90, '否', '未归档', 20, 70, '', ' 否 ']);
+  normal.getCell('L1').value = '是否谈判付款';
+  normal.getCell('L2').value = '是';
+  const parsed = await parseWorkbook(await asBuffer(workbook), { slotId: 'schedule' });
+  assert.deepEqual(parsed.records.map(record => record.category), ['negotiated', 'negotiated_normal', 'normal']);
+  const second = parsed.records[1];
+  assert.equal(second.sourceSheet, '谈判付款');
+  assert.equal(second.sourceRow, 3);
+  assert.equal(second.dueDate, '2027-01-01');
+  assert.deepEqual(second.plans, [{ month: '2026-11', amountCents: 2000 }, { month: '2026-12', amountCents: 7000 }]);
+});
+
+test('谈判分类缺失、未知或缺表头时拒绝并定位，不默认为任一付款类别', async () => {
+  const { workbook, negotiated } = scheduleBook();
+  for (const value of [null, '待定', '1']) {
+    negotiated.getCell('O2').value = value;
+    await assert.rejects(parseWorkbook(await asBuffer(workbook), { slotId: 'schedule' }), error => error.status === 422 && error.issues.some(issue => issue.sourceSheet === '谈判付款' && issue.sourceRow === 2 && issue.message.includes('是否谈判分批') && issue.message.includes('O2')));
+  }
+  negotiated.getCell('O1').value = null;
+  await assert.rejects(parseWorkbook(await asBuffer(workbook), { slotId: 'schedule' }), error => error.status === 422 && error.issues.some(issue => issue.sourceSheet === '谈判付款' && issue.sourceRow === 1 && issue.message.includes('是否谈判分批')));
+});
+
+test('付款申请、已付、剩余的空值和无缓存公式保存为零，月支付公式不凭空计算', async () => {
+  const { workbook, negotiated, normal } = scheduleBook();
+  for (const address of ['F2', 'H2', 'I2']) negotiated.getCell(address).value = { formula: '1+2' };
+  negotiated.getCell('L2').value = { formula: '1+2' };
+  negotiated.getCell('M2').value = 0;
+  for (const address of ['F2', 'H2', 'I2']) normal.getCell(address).value = null;
+  const parsed = await parseWorkbook(await asBuffer(workbook), { slotId: 'schedule' });
+  for (const record of parsed.records) {
+    assert.equal(record.amountCents, 0);
+    assert.equal(record.paidCents, 0);
+    assert.equal(record.remainingCents, 0);
+  }
+  assert.deepEqual(parsed.records[0].plans, [{ month: '2026-11', amountCents: 0 }, { month: '2026-12', amountCents: 0 }]);
+  assert.equal(parsed.records[0].raw['OA-申请付款金额'], null);
+  negotiated.getCell('F2').value = 25;
+  negotiated.getCell('L2').value = null;
+  negotiated.getCell('M2').value = null;
+  const pending = await parseWorkbook(await asBuffer(workbook), { slotId: 'schedule' });
+  assert.deepEqual(pending.records[0].plans, [{ month: null, amountCents: 2500 }]);
 });
 
 test('缺必需表、空数据、不合法选表及损坏归档均失败', async () => {
@@ -147,9 +203,11 @@ test('同流程号多笔记录保留并提示核对', async () => {
   assert.equal(parsed.issues.filter(issue => issue.code === 'DUPLICATE_FLOW').length, 2);
 });
 
-test('实际付款样表基准：126 条谈判、41 条正常，月计划总额与申请总额相符', { skip: !process.env.SCHEDULE_SAMPLE }, async () => {
+test('实际付款样表基准：谈判表56条分批、70条非分批，正常表41条，总记录和计划金额保持', { skip: !process.env.SCHEDULE_SAMPLE }, async () => {
   const parsed = await parseWorkbook(await fs.readFile(process.env.SCHEDULE_SAMPLE), { slotId: 'schedule' });
-  assert.equal(parsed.records.filter(record => record.category === 'negotiated').length, 126);
+  assert.equal(parsed.records.length, 167);
+  assert.equal(parsed.records.filter(record => record.category === 'negotiated').length, 56);
+  assert.equal(parsed.records.filter(record => record.category === 'negotiated_normal').length, 70);
   assert.equal(parsed.records.filter(record => record.category === 'normal').length, 41);
   assert.equal(parsed.issues.filter(issue => issue.code === 'PLAN_AMOUNT_MISMATCH').length, 0);
   assert.ok(parsed.records.every(record => Number.isSafeInteger(record.amountCents)));

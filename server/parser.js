@@ -1,6 +1,6 @@
 import ExcelJS from 'exceljs';
 import yauzl from 'yauzl';
-import { MAX_UPLOAD_BYTES, SLOTS } from '../shared/constants.js';
+import { MAX_UPLOAD_BYTES, PARSER_VERSION, SLOTS } from '../shared/constants.js';
 import { findDuplicateIssues } from './dashboard.js';
 
 const MAX_EXPANDED_BYTES = 200 * 1024 * 1024;
@@ -208,16 +208,20 @@ export async function parseWorkbook(buffer, { slotId, selectedSheets } = {}) {
   for (const sheetName of selected) {
     const sheet = workbook.getWorksheet(sheetName);
     const { headers, rowNumber } = headersOf(sheet);
-    const category = slotId === 'schedule' ? (sheetName === '谈判付款' ? 'negotiated' : 'normal') : slotId;
+    const sourceCategory = slotId === 'schedule' ? (sheetName === '谈判付款' ? 'negotiated' : 'normal') : slotId;
     const supplierCol = columnOf(headers, ['供应商', '供应商名称']);
-    const amountCol = columnOf(headers, category === 'negotiated' ? ['OA-申请付款金额'] : category === 'normal' ? ['本次申请付款金额'] : ['申请付款金额']);
+    const amountCol = columnOf(headers, sourceCategory === 'negotiated' ? ['OA-申请付款金额'] : sourceCategory === 'normal' ? ['本次申请付款金额'] : ['申请付款金额']);
     const payerCol = columnOf(headers, ['付款主体']);
-    const dateCol = columnOf(headers, category === 'normal' ? ['应付时间'] : category === 'negotiated' ? ['应付款时间'] : ['预估付款月份']);
+    const dateCol = columnOf(headers, sourceCategory === 'normal' ? ['应付时间'] : sourceCategory === 'negotiated' ? ['应付款时间'] : ['预估付款月份']);
+    const splitCol = columnOf(headers, ['是否谈判分批']);
     const paidCol = columnOf(headers, ['已付金额']);
     const remainingCol = columnOf(headers, ['剩余付款金额', '剩余金额']);
     const summaryCol = columnOf(headers, ['摘要']);
     const monthlyCols = headers.map(header => ({ ...header, match: header.name.match(/^(\d{4})年(\d{1,2})月支付$/) })).filter(header => header.match);
-    if (!amountCol || !payerCol || !summaryCol || !dateCol || (slotId === 'schedule' && (!paidCol || !remainingCol)) || (category === 'negotiated' && !monthlyCols.length)) {
+    if (sourceCategory === 'negotiated' && !splitCol) {
+      throw invalid(`工作表“${sheetName}”缺少“是否谈判分批”字段。`, [{ code: 'MISSING_HEADER', sourceSheet: sheetName, sourceRow: rowNumber, message: '请保留“是否谈判分批”表头，并填写是或否。' }]);
+    }
+    if (!amountCol || !payerCol || !summaryCol || !dateCol || (slotId === 'schedule' && (!paidCol || !remainingCol)) || (sourceCategory === 'negotiated' && !monthlyCols.length)) {
       throw invalid(`工作表“${sheetName}”缺少必需字段。`, [{ code: 'MISSING_HEADER', sourceSheet: sheetName, sourceRow: rowNumber, message: '请保留模板中的金额、日期、付款主体、摘要及已付/剩余字段；谈判付款还须有带年份的月支付列。' }]);
     }
     const seenMonths = new Set();
@@ -237,19 +241,29 @@ export async function parseWorkbook(buffer, { slotId, selectedSheets } = {}) {
       const location = { sourceSheet: sheetName, sourceRow: number, recordKey: key, slotId };
       const warn = (code, message) => issues.push({ ...location, code, severity: 'warning', message });
       const error = message => errors.push({ ...location, code: 'INVALID_ROW', message });
-      const money = (column, required = false) => {
+      let category = sourceCategory;
+      if (sourceCategory === 'negotiated') {
+        const split = normalize(textOf(row.getCell(splitCol)));
+        if (!['是', '否'].includes(split)) {
+          error(`${row.getCell(splitCol).address}：“是否谈判分批”须填写是或否。`);
+          return;
+        }
+        category = split === '是' ? 'negotiated' : 'negotiated_normal';
+      }
+      const zeroedCells = [];
+      const money = column => {
         const cell = row.getCell(column);
         try {
           const value = parseMoney(valueOf(cell));
-          if (value === null && (required || (cell.formula && cell.result == null))) throw invalid('金额为空或公式没有已保存的计算结果。');
-          return value;
+          if (value === null) zeroedCells.push(cell.address);
+          return value ?? 0;
         } catch (cause) {
           error(`${cell.address}：${cause.message}`);
           return null;
         }
       };
       if (!supplier) error(`第 ${number} 行缺少供应商。`);
-      const amountCents = money(amountCol, true);
+      const amountCents = money(amountCol);
       if (!supplier || amountCents === null) return;
       const paidCents = slotId === 'schedule' ? money(paidCol) : null;
       const remainingCents = slotId === 'schedule' ? money(remainingCol) : null;
@@ -271,8 +285,12 @@ export async function parseWorkbook(buffer, { slotId, selectedSheets } = {}) {
         if (note) comments[cell.address] = note;
       }
       const plans = [];
-      if (category === 'negotiated') {
+      if (sourceCategory === 'negotiated') {
         for (const header of monthlyCols) {
+          const cell = row.getCell(header.column);
+          const hasFormula = cell.value && typeof cell.value === 'object' && ('formula' in cell.value || 'sharedFormula' in cell.value);
+          // 空白月份不凭空指定付款时间；显式零值和无缓存结果的公式保留为当月零元。
+          if (!hasFormula && textOf(cell) === '') continue;
           const value = money(header.column);
           if (value !== null) plans.push({ month: header.month, amountCents: value });
         }
@@ -292,11 +310,10 @@ export async function parseWorkbook(buffer, { slotId, selectedSheets } = {}) {
       const payer = textOf(row.getCell(payerCol));
       if (!payer) warn('MISSING_PAYER', '付款主体为空，请核对原表。');
       if (slotId === 'schedule') {
-        if (paidCents === null) warn('MISSING_PAID', '已付金额未明确，汇总仅包含其他已知金额，未按零补齐。');
-        if (remainingCents === null) warn('MISSING_REMAINING', '剩余金额未明确，汇总仅包含其他已知金额，未按零补齐。');
         if (paidCents !== null && remainingCents !== null && BigInt(paidCents) + BigInt(remainingCents) !== BigInt(amountCents)) warn('BALANCE_MISMATCH', '已付金额加剩余金额与申请金额不一致，请核对原表。');
         if ((settled === '是' && remainingCents !== null && remainingCents !== 0) || (status === '归档' && remainingCents !== null && remainingCents > 0)) warn('STATUS_CONFLICT', '结清或流程状态与剩余金额存在矛盾；未据此改动已付金额。');
       }
+      if (zeroedCells.length) warn('ZERO_DEFAULTED', `${zeroedCells.join('、')}：金额为空或公式没有已保存的计算结果，已按0保存。`);
       if ([amountCents, paidCents, remainingCents, ...plans.map(plan => plan.amountCents)].some(value => value !== null && value < 0)) warn('NEGATIVE_AMOUNT', '记录含负金额，已按原值保留，请确认是否为退款或冲减。');
       records.push({ key, slotId, sourceSheet: sheetName, sourceRow: number, category,
         owner: getText(['跟单员', '创跟单员']) || (slotId === 'schedule' ? '' : sheetName),
@@ -312,5 +329,5 @@ export async function parseWorkbook(buffer, { slotId, selectedSheets } = {}) {
   if (errors.length) throw invalid(`发现 ${errors.length} 处数据错误，未替换当前文件。`, errors);
   if (!records.length) throw invalid('所选工作表没有有效业务记录，未替换当前文件。');
   issues.push(...findDuplicateIssues(records));
-  return { records, issues, selectedSheets: selected, sheets };
+  return { parserVersion: PARSER_VERSION, records, issues, selectedSheets: selected, sheets };
 }

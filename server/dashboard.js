@@ -1,7 +1,7 @@
-import { CATEGORIES } from '../shared/constants.js';
+import { CATEGORIES, LEDGER_CATEGORIES } from '../shared/constants.js';
 
 const MONTH = /^\d{4}-(0[1-9]|1[0-2])$/;
-const ledgerCategories = new Set(['normal', 'negotiated']);
+const ledgerCategories = new Set(LEDGER_CATEGORIES);
 const normalize = value => String(value ?? '').normalize('NFKC').replace(/\s+/g, '').trim();
 const monthNumber = value => value ? Number(value.slice(0, 4)) * 12 + Number(value.slice(5)) - 1 : null;
 
@@ -121,7 +121,7 @@ export function buildDashboard(records, issues = [], slots = [], filters = {}) {
     for (const plan of plans) {
       selectedPlanCents = add(selectedPlanCents, plan.amountCents);
       const month = plan.month ?? 'pending';
-      if (!monthly.has(month)) monthly.set(month, { month, normal: 0, negotiated: 0, shipment: 0, after_sales: 0, unregistered: 0 });
+      if (!monthly.has(month)) monthly.set(month, { month, ...Object.fromEntries(Object.keys(CATEGORIES).map(category => [category, 0])) });
       const line = monthly.get(month);
       line[record.category] = add(line[record.category], plan.amountCents);
       if (ledgerCategories.has(record.category)) {

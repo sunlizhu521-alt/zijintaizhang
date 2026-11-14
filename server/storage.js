@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { SLOTS } from '../shared/constants.js';
+import { PARSER_VERSION, SLOTS } from '../shared/constants.js';
 import { audit, transaction } from './db.js';
 
 export function initializeStorage(db) {
@@ -16,6 +16,11 @@ export function initializeStorage(db) {
       uploaded_at TEXT NOT NULL, record_count INTEGER NOT NULL, issue_count INTEGER NOT NULL
     );
     CREATE INDEX IF NOT EXISTS versions_slot ON file_versions(slot_id, uploaded_at);
+    CREATE TABLE IF NOT EXISTS file_parse_cache (
+      version_id TEXT PRIMARY KEY REFERENCES file_versions(id),
+      parser_version INTEGER NOT NULL, parsed_json TEXT NOT NULL,
+      record_count INTEGER NOT NULL, issue_count INTEGER NOT NULL
+    );
     CREATE TABLE IF NOT EXISTS upload_drafts (
       token TEXT PRIMARY KEY, slot_id TEXT NOT NULL REFERENCES file_slots(id),
       user_id TEXT NOT NULL REFERENCES users(id), base_revision INTEGER NOT NULL,
@@ -42,8 +47,10 @@ function versionInfo(row) {
 export function listSlots(db) {
   return SLOTS.map(s => {
     const row = db.prepare(`SELECT s.*, v.filename, v.uploaded_by, v.uploaded_at,
-      v.record_count, v.issue_count FROM file_slots s
-      LEFT JOIN file_versions v ON v.id = s.current_version_id WHERE s.id = ?`).get(s.id);
+      COALESCE(c.record_count, v.record_count) AS record_count,
+      COALESCE(c.issue_count, v.issue_count) AS issue_count FROM file_slots s
+      LEFT JOIN file_versions v ON v.id = s.current_version_id
+      LEFT JOIN file_parse_cache c ON c.version_id=v.id AND c.parser_version=? WHERE s.id = ?`).get(PARSER_VERSION, s.id);
     return { ...s, revision: row.revision, currentVersionId: row.current_version_id,
       filename: row.filename, uploadedBy: row.uploaded_by, uploadedAt: row.uploaded_at,
       recordCount: row.record_count || 0, issueCount: row.issue_count || 0,
@@ -97,9 +104,12 @@ export function activateDraft(db, draft, parsed, revision, event) {
 }
 export function listVersions(db, slotId) {
   const slot = requireSlot(db, slotId);
-  return db.prepare(`SELECT id,filename,uploaded_by,uploaded_at,record_count,issue_count,selected_sheets_json,
-    id = ? AS current FROM file_versions WHERE slot_id=? ORDER BY uploaded_at DESC, rowid DESC`)
-    .all(slot.current_version_id, slotId).map(versionInfo);
+  return db.prepare(`SELECT v.id,v.filename,v.uploaded_by,v.uploaded_at,v.selected_sheets_json,
+    COALESCE(c.record_count, v.record_count) AS record_count, COALESCE(c.issue_count, v.issue_count) AS issue_count,
+    v.id = ? AS current FROM file_versions v
+    LEFT JOIN file_parse_cache c ON c.version_id=v.id AND c.parser_version=?
+    WHERE v.slot_id=? ORDER BY v.uploaded_at DESC, v.rowid DESC`)
+    .all(slot.current_version_id, PARSER_VERSION, slotId).map(versionInfo);
 }
 export function getVersion(db, slotId, id) {
   requireSlot(db, slotId);
@@ -109,8 +119,10 @@ export function getVersion(db, slotId, id) {
 }
 export function versionDetails(db, slotId, id) {
   const row = getVersion(db, slotId, id);
-  const parsed = JSON.parse(row.parsed_json);
-  return { version: versionInfo({ ...row, current: requireSlot(db, slotId).current_version_id === id }),
+  const cached = db.prepare('SELECT parsed_json,record_count,issue_count FROM file_parse_cache WHERE version_id=? AND parser_version=?')
+    .get(id, PARSER_VERSION);
+  const parsed = JSON.parse(cached?.parsed_json ?? row.parsed_json);
+  return { version: versionInfo({ ...row, ...cached, current: requireSlot(db, slotId).current_version_id === id }),
     records: parsed.records.map(r => ({ ...r, filename: row.filename, versionId: row.id, slotId })),
     issues: parsed.issues.map(i => ({ ...i, versionId: row.id, slotId })) };
 }
@@ -128,8 +140,9 @@ export function restoreVersion(db, slotId, id, revision, event) {
 }
 export function activeData(db) {
   const records = []; const issues = [];
-  for (const row of db.prepare(`SELECT v.id,v.slot_id,v.filename,v.parsed_json FROM file_slots s
-    JOIN file_versions v ON v.id=s.current_version_id`).all()) {
+  for (const row of db.prepare(`SELECT v.id,v.slot_id,v.filename,COALESCE(c.parsed_json,v.parsed_json) AS parsed_json FROM file_slots s
+    JOIN file_versions v ON v.id=s.current_version_id
+    LEFT JOIN file_parse_cache c ON c.version_id=v.id AND c.parser_version=?`).all(PARSER_VERSION)) {
     const parsed = JSON.parse(row.parsed_json);
     records.push(...parsed.records.map(r => ({ ...r, slotId: row.slot_id, versionId: row.id, filename: row.filename })));
     issues.push(...parsed.issues.map(i => ({ ...i, slotId: row.slot_id, versionId: row.id })));
