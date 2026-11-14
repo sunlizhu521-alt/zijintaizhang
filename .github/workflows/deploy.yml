@@ -18,7 +18,7 @@ concurrency:
 jobs:
   verify-and-deploy:
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 70
     steps:
       - uses: actions/checkout@v7
         with:
@@ -131,7 +131,7 @@ jobs:
               const result = spawnSync('ssh', ['-i', env.DEPLOY_KEY_PATH, '-o', 'BatchMode=yes', '-o', 'IdentitiesOnly=yes',
                 '-o', 'StrictHostKeyChecking=yes', '-o', `UserKnownHostsFile=${env.DEPLOY_HOSTS_PATH}`, '-o', 'ConnectTimeout=15',
                 '-o', 'ServerAliveInterval=15', '-o', 'ServerAliveCountMax=3', `${env.DEPLOY_USER}@${env.DEPLOY_HOST}`, `deploy ${env.GITHUB_SHA}`],
-                { input: manifest, stdio: ['pipe', 'inherit', 'inherit'], env: childEnv, timeout: 330000 });
+                { input: manifest, stdio: ['pipe', 'inherit', 'inherit'], env: childEnv, timeout: 1320000 });
               if (result.status === 0) { deployed = true; break; }
             } catch {
               // Never print fetch errors or the signed download URL.
