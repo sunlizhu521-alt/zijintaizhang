@@ -17,19 +17,17 @@ if (!process.stdin.isTTY || !process.stdout.isTTY) {
   } });
   output.isTTY = true;
   output.columns = process.stdout.columns;
-  const rl = createInterface({ input: process.stdin, output, terminal: true });
+  const rl = createInterface({ input: process.stdin, output, terminal: true, crlfDelay: Infinity, historySize: 0 });
   const ask = (prompt, hidden = false) => new Promise((resolveAnswer, reject) => {
     muted = hidden;
     if (hidden) process.stdout.write(prompt);
     const interrupted = () => {
-      muted = false;
       process.stdout.write('\n');
       reject(new Error('已取消初始化'));
     };
     rl.once('SIGINT', interrupted);
     rl.question(hidden ? '' : prompt, (answer) => {
       rl.off('SIGINT', interrupted);
-      muted = false;
       if (hidden) process.stdout.write('\n');
       resolveAnswer(answer);
     });
@@ -52,8 +50,8 @@ if (!process.stdin.isTTY || !process.stdout.isTTY) {
     console.error(error.message);
     process.exitCode = 1;
   } finally {
-    muted = false;
     rl.close();
+    muted = false;
     db?.close();
   }
 }
