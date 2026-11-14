@@ -150,13 +150,13 @@ GitHub 仓库设置：
 | Actions secret | `DEPLOY_SSH_KEY` | 本项目专用 SSH 私钥 |
 | Actions secret | `DEPLOY_KNOWN_HOSTS` | 经可信服务器控制台核验的主机公钥记录 |
 
-首次配置需要：Linux x86_64、Python 3、PM2、curl、ss、flock、timeout；上述项目目录应由部署用户拥有。先将固定提交中的两份部署脚本校验 SHA256 后安装到 `bin/`，再配置专用公钥的强制命令：
+首次配置需要：Linux x86_64、Python 3、PM2、curl、ss、flock、timeout；上述项目目录应由部署用户拥有。下载校验使用 Python 标准库，内嵌在 `receive-deploy.sh` 中，无额外 helper 或 Python 依赖。先将固定提交中的两份部署脚本校验 SHA256 后安装到 `bin/`，再配置专用公钥的强制命令：
 
 ```text
 restrict,command="/home/ubuntu/zhuge-ai-lab/zijintaizhang/bin/receive-deploy.sh" <本项目SSH公钥>
 ```
 
-接收入口只接受 `deploy <40位提交SHA>`，不接受交互式 shell 或 SFTP。此入口限制部署命令；应用仍以 ubuntu 身份运行，不构成独立系统用户隔离。服务器 `bin/` 下的两份脚本不会被普通发布包覆盖，更新它们需另行审查安装。
+接收入口只接受 `deploy <40位提交SHA>`，stdin 是不超过 16 KiB 的下载清单，不接受交互式 shell、SFTP 或直接传入 tar。此入口限制部署命令；应用仍以 ubuntu 身份运行，不构成独立系统用户隔离。服务器 `bin/` 下的两份脚本不会被普通发布包覆盖，更新它们需另行审查安装。
 
 Nginx 按 `deploy/nginx-location.conf.example` 只在现有 HTTPS server 中增加本项目路径，保留原证书、根路由和其他项目配置；验证配置成功后再 reload。HTTPS 证书续期属于既有入口运维范围。
 
@@ -164,9 +164,10 @@ Nginx 按 `deploy/nginx-location.conf.example` 只在现有 HTTPS server 中增�
 
 1. PR 运行测试与构建；`main` 推送或在 `main` 手动运行时继续部署。同一分支的任务串行，不取消正在执行的部署。
 2. 在 Ubuntu 24.04 + 最新 Node 22 上安装锁定依赖、测试、构建，再仅安装生产依赖并打包独立 Node 二进制及校验信息。
-3. 通过固定 known_hosts 校验的 SSH 发送发布包。接收端检查命令、路径白名单、体积、重复路径和 runtime 校验值，拒绝链接及特殊文件。
-4. 校验 4010 未占用，或确认其属于本项目的既有 PM2 进程；检查现有数据库备份和完整性后，切换 `current`，只重启 `zijintaizhang`。
-5. 检查本机及 HTTPS 健康接口返回的应用名和提交 SHA；发布窗口内失败时尝试恢复前一版本。Actions 再从外部检查 HTTPS 健康接口和首页。
+3. 将发布包上传到 Actions Artifact，保留一天。Runner 用本次任务的短期 `GITHUB_TOKEN`（`actions: read`）取得临时 HTTPS 地址，通过固定 known_hosts 校验的 SSH 只发送小型下载清单。服务器不保存或接收 GitHub token。
+4. 接收端只接受 GitHub Actions 使用的 `productionresultssa<数字>.blob.core.windows.net` HTTPS 存储地址；拒绝其他域名、非443端口、私网 DNS 结果和重定向，连接固定到已验证的公网 IP。下载总限时180秒、连接限时10秒；核验 ZIP 和 tar 的 SHA256、预期大小及 ZIP 内唯一文件，再执行原 tar 的路径白名单、体积、重复路径和 runtime 校验。临时下载URL不写日志；失败最多重试三次，每次重新获取签名地址。
+5. 校验 4010 未占用，或确认其属于本项目的既有 PM2 进程；检查现有数据库备份和完整性后，切换 `current`，只重启 `zijintaizhang`。
+6. 检查本机及 HTTPS 健康接口返回的应用名和提交 SHA；发布窗口内失败时尝试恢复前一版本。Actions 再从外部检查 HTTPS 健康接口和首页。
 
 服务器不执行 npm 安装或前端构建，也不升级全局 Node。旧代码版本保留在 `releases/`；同一提交的发布目录保持不变，失败版本需审查后处理或通过新提交发布。
 
