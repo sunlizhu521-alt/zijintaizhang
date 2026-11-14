@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join, resolve } from 'node:path';
 import { openDatabase } from '../server/db.js';
 import { initAdmin } from '../server/auth.js';
+import { PASSWORD_MESSAGE } from '../shared/password.js';
 
 if (!process.stdin.isTTY || !process.stdout.isTTY) {
   console.error('请在交互式 Terminal 中运行 npm run admin:init，密码需要隐藏输入。');
@@ -39,7 +40,7 @@ if (!process.stdin.isTTY || !process.stdout.isTTY) {
     const dataDir = process.env.DATA_DIR ? resolve(process.env.DATA_DIR) : join(root, 'data');
     db = openDatabase(join(dataDir, 'zijintaizhang.sqlite'));
     if (db.prepare('SELECT id FROM users WHERE is_admin=1 LIMIT 1').get()) throw new Error('管理员已初始化，请在系统内管理账号。');
-    console.log('初始化资金台账管理员。密码不会显示或写入代码；请使用15至128个字符。');
+    console.log(`初始化资金台账管理员。密码不会显示或写入代码；${PASSWORD_MESSAGE}。`);
     const username = await ask('管理员账号：');
     const displayName = await ask('显示姓名：');
     const password = await ask('管理员密码：', true);

@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { createHash, randomBytes, randomUUID, scrypt, timingSafeEqual } from 'node:crypto';
 import { promisify } from 'node:util';
 import { BASE_PATH, API_PATH, PERMISSIONS } from '../shared/constants.js';
+import { isValidPassword, PASSWORD_MESSAGE } from '../shared/password.js';
 import { audit, transaction } from './db.js';
 
 const deriveKey = promisify(scrypt);
@@ -17,9 +18,7 @@ function problem(message, status = 400) {
 }
 
 function validPassword(password) {
-  if (typeof password !== 'string' || password.length > 256) throw problem('密码须为15至128个字符');
-  const length = [...password].length;
-  if (length < 15 || length > 128 || !password.trim()) throw problem('密码须为15至128个字符');
+  if (!isValidPassword(password)) throw problem(PASSWORD_MESSAGE);
   return password;
 }
 
@@ -96,7 +95,7 @@ export function createAuth(db, { secureCookies = false } = {}) {
   const ipFailures = new Map();
   const accountFailures = new Map();
   let lastCleanup = 0;
-  const dummyHash = hashPassword(randomBytes(32).toString('hex'));
+  const dummyHash = hashPassword(`a1${randomBytes(32).toString('hex')}`);
   const cookieOptions = { httpOnly: true, secure: secureCookies, sameSite: 'strict', path: BASE_PATH };
   const readUser = (id) => db.prepare('SELECT * FROM users WHERE id = ?').get(id);
   const requestPath = (req) => (req.originalUrl || req.path || '').split('?')[0];

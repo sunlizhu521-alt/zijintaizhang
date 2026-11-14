@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { isValidPassword, PASSWORD_MIN_LENGTH, PASSWORD_MAX_LENGTH, PASSWORD_MESSAGE } from '../shared/password.js';
 import { api, setCsrfToken } from './api.js';
 import { can } from './format.js';
 import { Empty, ErrorNotice, Loading, Modal, Notice } from './components.jsx';
@@ -64,7 +65,7 @@ function Login({ onLogin, sessionError }) {
     catch (err) { setError(err); setPassword(''); }
     finally { setBusy(false); }
   }
-  return <div className="auth-page"><section className="auth-card"><Brand /><h1>登录资金台账</h1><p className="subtitle">使用管理员为你创建的账号登录。</p><ErrorNotice error={error || sessionError} />{initialized === false ? <Notice>系统尚未初始化。请管理员先在服务器完成首个账号设置，随后刷新本页。</Notice> : initialized == null && !error ? <Loading /> : <form onSubmit={submit} className="form-stack"><label>账号<input required name="username" autoComplete="username" maxLength={64} value={username} onChange={event => setUsername(event.target.value)} autoFocus /></label><label>密码<input type="password" required name="password" autoComplete="current-password" maxLength={128} value={password} onChange={event => setPassword(event.target.value)} /></label><button className="primary login-button" disabled={busy}>{busy ? '正在登录…' : '登录'}</button></form>}<p className="auth-footnote">文件、版本和操作记录在服务器保存。</p></section></div>;
+  return <div className="auth-page"><section className="auth-card"><Brand /><h1>登录资金台账</h1><p className="subtitle">使用管理员为你创建的账号登录。</p><ErrorNotice error={error || sessionError} />{initialized === false ? <Notice>系统尚未初始化。请管理员先在服务器完成首个账号设置，随后刷新本页。</Notice> : initialized == null && !error ? <Loading /> : <form onSubmit={submit} className="form-stack"><label>账号<input required name="username" autoComplete="username" maxLength={64} value={username} onChange={event => setUsername(event.target.value)} autoFocus /></label><label>密码<input type="password" required name="password" autoComplete="current-password" maxLength={PASSWORD_MAX_LENGTH * 2} value={password} onChange={event => setPassword(event.target.value)} /></label><button className="primary login-button" disabled={busy}>{busy ? '正在登录…' : '登录'}</button></form>}<p className="auth-footnote">文件、版本和操作记录在服务器保存。</p></section></div>;
 }
 
 function PasswordForm({ onSaved }) {
@@ -74,10 +75,11 @@ function PasswordForm({ onSaved }) {
   async function submit(event) {
     event.preventDefault(); setError(null);
     if (values.newPassword !== values.repeat) { setError(new Error('两次输入的新密码不一致。')); return; }
+    if (!isValidPassword(values.newPassword)) { setError(new Error(PASSWORD_MESSAGE)); return; }
     setBusy(true);
     try { const result = await api('/auth/password', { method: 'POST', body: { currentPassword: values.currentPassword, newPassword: values.newPassword } }); setValues({ currentPassword: '', newPassword: '', repeat: '' }); onSaved(result); }
     catch (err) { setError(err); }
     finally { setBusy(false); }
   }
-  return <form onSubmit={submit} className="form-stack"><label>当前密码<input type="password" required autoComplete="current-password" value={values.currentPassword} onChange={event => setValues(previous => ({ ...previous, currentPassword: event.target.value }))} /></label><label>新密码<input type="password" required minLength={15} maxLength={128} autoComplete="new-password" value={values.newPassword} onChange={event => setValues(previous => ({ ...previous, newPassword: event.target.value }))} /><small>至少 15 个字符，建议使用较长且容易记住的密码短语。</small></label><label>再次输入新密码<input type="password" required minLength={15} maxLength={128} autoComplete="new-password" value={values.repeat} onChange={event => setValues(previous => ({ ...previous, repeat: event.target.value }))} /></label><ErrorNotice error={error} /><button className="primary" disabled={busy}>{busy ? '正在保存…' : '保存新密码'}</button></form>;
+  return <form onSubmit={submit} className="form-stack"><label>当前密码<input type="password" required autoComplete="current-password" value={values.currentPassword} onChange={event => setValues(previous => ({ ...previous, currentPassword: event.target.value }))} /></label><label>新密码<input type="password" required minLength={PASSWORD_MIN_LENGTH} maxLength={PASSWORD_MAX_LENGTH * 2} autoComplete="new-password" value={values.newPassword} onChange={event => setValues(previous => ({ ...previous, newPassword: event.target.value }))} /><small>{PASSWORD_MESSAGE}。</small></label><label>再次输入新密码<input type="password" required minLength={PASSWORD_MIN_LENGTH} maxLength={PASSWORD_MAX_LENGTH * 2} autoComplete="new-password" value={values.repeat} onChange={event => setValues(previous => ({ ...previous, repeat: event.target.value }))} /></label><ErrorNotice error={error} /><button className="primary" disabled={busy}>{busy ? '正在保存…' : '保存新密码'}</button></form>;
 }

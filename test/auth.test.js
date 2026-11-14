@@ -8,9 +8,9 @@ import { openDatabase, audit, pruneLogs, serializeAudit } from '../server/db.js'
 import { createAuth, hashPassword, verifyPassword, initAdmin } from '../server/auth.js';
 import { API_PATH } from '../shared/constants.js';
 
-const ADMIN_PASSWORD = 'Synthetic-admin-password-2026!';
-const USER_PASSWORD = 'Synthetic-user-password-2026!';
-const NEW_PASSWORD = 'Changed-synthetic-password-2026!';
+const ADMIN_PASSWORD = 'Admin1';
+const USER_PASSWORD = 'User12';
+const NEW_PASSWORD = 'Next12';
 
 async function fixture(t, options = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'zijintaizhang-auth-'));
@@ -57,16 +57,50 @@ async function fixture(t, options = {}) {
   return { db, request, login };
 }
 
-test('密码按完整字符保存，哈希不可逆，拒绝空值、过短、过长和损坏哈希', async () => {
-  const password = '  密码保留首尾空格-十五字符以上🙂  ';
+test('密码按完整字符保存，6至128个字符必须含英文字母与数字，拒绝损坏哈希', async () => {
+  const password = '  A1密码保留首尾空格🙂  ';
   const hash = await hashPassword(password);
   assert.ok(!hash.includes(password));
   assert.equal(await verifyPassword(password, hash), true);
   assert.equal(await verifyPassword(password.trim(), hash), false);
   assert.equal(await verifyPassword('wrong-password-value', hash), false);
   assert.equal(await verifyPassword(password, 'malformed'), false);
-  for (const value of ['', 'short', ' '.repeat(20), 'x'.repeat(129), null]) await assert.rejects(hashPassword(value));
-  await assert.doesNotReject(hashPassword('x'.repeat(128)));
+  for (const value of ['', 'A1bcd', 'abcdef', '123456', '中文密码123', 'Ａ12345', 'abc１２３',
+    ' '.repeat(20), `A1${'x'.repeat(127)}`, `A1${'🙂'.repeat(127)}`, null]) {
+    await assert.rejects(hashPassword(value));
+  }
+  for (const value of ['Abc123', 'a1!中🙂?', `A1${'🙂'.repeat(126)}`]) {
+    const acceptedHash = await hashPassword(value);
+    assert.equal(await verifyPassword(value, acceptedHash), true);
+  }
+});
+
+test('创建、修改和重置密码统一校验，失败不会创建用户、改密码或撤销会话', async (t) => {
+  const { db, request, login } = await fixture(t);
+  const admin = await login();
+  const invalidCreate = await request('/users', { method: 'POST', session: admin,
+    body: { username: 'policy-user', password: 'Abc12', permissions: ['dashboard'] } });
+  assert.equal(invalidCreate.status, 400);
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM users').get().n, 1);
+
+  const created = await request('/users', { method: 'POST', session: admin,
+    body: { username: 'policy-user', password: USER_PASSWORD, permissions: ['dashboard'] } });
+  assert.equal(created.status, 201);
+  const id = created.data.user.id;
+  const initial = await login('policy-user', USER_PASSWORD);
+  const hashBefore = db.prepare('SELECT password_hash FROM users WHERE id=?').get(id).password_hash;
+  const invalidChange = await request('/auth/password', { method: 'POST', session: initial,
+    body: { currentPassword: USER_PASSWORD, newPassword: '123456' } });
+  assert.equal(invalidChange.status, 400);
+  assert.equal((await request('/auth/session', { session: initial })).status, 200);
+  assert.equal(db.prepare('SELECT password_hash FROM users WHERE id=?').get(id).password_hash, hashBefore);
+
+  const invalidReset = await request(`/users/${id}/reset-password`, { method: 'POST', session: admin,
+    body: { password: 'abcdef' } });
+  assert.equal(invalidReset.status, 400);
+  assert.equal((await request('/auth/session', { session: initial })).status, 200);
+  assert.equal(db.prepare('SELECT password_hash FROM users WHERE id=?').get(id).password_hash, hashBefore);
+  assert.equal((await login('policy-user', USER_PASSWORD)).status, 200);
 });
 
 test('会话只保存token哈希、cookie受保护，错误登录保留未验证账号且不泄露密码', async (t) => {
