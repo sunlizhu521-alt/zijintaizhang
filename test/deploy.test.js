@@ -136,37 +136,50 @@ assert calls == [((public_ip, 443), 10)] and connection.sock == 'tls-socket'
 `);
 });
 
-test('Artifact下载拒绝重定向、越界内容、编码和摘要错误', (t) => {
+test('Artifact并行分段完整重组，拒绝重定向、越界、范围错位、截断和摘要错误', (t) => {
   const dir = fixture(t);
   checkDownload(`
 import io
 body = b'bounded test archive'
 manifest = dict(url='synthetic', zipSha256=hashlib.sha256(body).hexdigest())
 validated_target = lambda url: ('productionresultssa1.blob.core.windows.net', '93.184.216.34', '/package')
-state = dict(status=200, body=body, headers={'Content-Length': str(len(body))})
+state = {}
+requests = []
 class Response:
-    def __init__(self): self.status, self.stream = state['status'], io.BytesIO(state['body'])
-    def getheader(self, name): return state['headers'].get(name)
+    def __init__(self, method, headers):
+        self.status = state.get('status', 200 if method == 'HEAD' else 206)
+        data = state.get('body', body)
+        self.headers = {'Content-Length': str(len(body))}
+        if method == 'GET':
+            start, end = map(int, headers['Range'][6:].split('-'))
+            self.headers = {'Content-Length': str(end - start + 1), 'Content-Range': f'bytes {start}-{end}/{len(body)}'}
+            data = data[start:end + 1]
+            if state.get('truncate'): data = data[:-1]
+        self.headers.update(state.get('headers', {}))
+        self.stream = io.BytesIO(data)
+    def getheader(self, name): return self.headers.get(name)
     def read(self, size): return self.stream.read(size)
 class Connection:
     sock = None
     def __init__(self, *args): pass
-    def request(self, *args, **kwargs): pass
-    def getresponse(self): return Response()
+    def request(self, method, target, headers):
+        self.method, self.headers = method, headers
+        requests.append((method, headers.get('Range')))
+    def getresponse(self): return Response(self.method, self.headers)
     def close(self): pass
 PinnedHTTPSConnection = Connection
 destination = os.path.join(test_data['dir'], 'download.zip')
 fetch_zip(manifest, destination)
 assert open(destination, 'rb').read() == body
-for changes, expected in ((dict(status=302), 'REDIRECT_NOT_ALLOWED'), (dict(headers={'Content-Length': str(MAX_ZIP + 1)}), 'ZIP_SIZE'), (dict(headers={'Content-Encoding': 'gzip'}), 'CONTENT_ENCODING'), (dict(body=b'wrong'), 'INCOMPLETE_DOWNLOAD')):
-    state = dict(status=200, body=body, headers={'Content-Length': str(len(body))})
-    state.update(changes)
+assert requests[0] == ('HEAD', None) and len(requests) == 8
+for changes, expected in ((dict(status=302), 'REDIRECT_NOT_ALLOWED'), (dict(headers={'Content-Length': str(MAX_ZIP + 1)}), 'ZIP_SIZE'), (dict(headers={'Content-Encoding': 'gzip'}), 'CONTENT_ENCODING'), (dict(truncate=True), 'INCOMPLETE_DOWNLOAD'), (dict(headers={'Content-Range': 'bytes 0-0/1'}), 'CONTENT_RANGE')):
+    state = changes
     try:
         fetch_zip(manifest, destination)
         raise AssertionError(expected)
     except Rejected as error:
         assert str(error) == expected
-state = dict(status=200, body=b'x' * len(body), headers={})
+state = dict(body=b'x' * len(body))
 try:
     fetch_zip(manifest, destination)
     raise AssertionError('digest mismatch accepted')

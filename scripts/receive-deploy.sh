@@ -25,9 +25,11 @@ trap 'exit 143' TERM HUP
 # SSH carries only a small manifest. The signed artifact URL stays in process memory.
 download_code=$(cat <<'PY_DOWNLOAD'
 import hashlib, http.client, ipaddress, json, os, re, signal, socket, ssl, stat, struct, sys, time, urllib.parse, zipfile
+from concurrent.futures import ThreadPoolExecutor
 
 MAX_TGZ = 128 * 1024 * 1024
 MAX_ZIP = MAX_TGZ + 1024 * 1024
+DOWNLOAD_SECONDS = 1200
 class Rejected(Exception):
     pass
 
@@ -78,42 +80,67 @@ class PinnedHTTPSConnection(http.client.HTTPSConnection):
 
 def fetch_zip(manifest, destination):
     host, address, target = validated_target(manifest['url'])
-    connection = PinnedHTTPSConnection(host, address)
-    deadline = time.monotonic() + 180
-    checksum, total = hashlib.sha256(), 0
-    try:
-        connection.request('GET', target, headers={'Host': host, 'Accept-Encoding': 'identity', 'User-Agent': 'zijintaizhang-deploy/1'})
+    deadline = time.monotonic() + DOWNLOAD_SECONDS
+    headers = {'Host': host, 'Accept-Encoding': 'identity', 'User-Agent': 'zijintaizhang-deploy/1'}
+    def response_for(connection, method, extra=None):
+        connection.request(method, target, headers=dict(headers, **(extra or {})))
         response = connection.getresponse()
         if 300 <= response.status < 400:
             reject('REDIRECT_NOT_ALLOWED')
-        if response.status != 200:
+        if response.status != (200 if method == 'HEAD' else 206):
             reject('HTTP_STATUS_' + str(response.status))
         length = response.getheader('Content-Length')
-        if length is not None and (not length.isdigit() or not 0 < int(length) <= MAX_ZIP):
+        if length is None or not length.isdigit() or not 0 < int(length) <= MAX_ZIP:
             reject('ZIP_SIZE')
         if response.getheader('Content-Encoding') not in (None, '', 'identity'):
             reject('CONTENT_ENCODING')
-        with open(destination, 'wb') as output:
-            while True:
-                remaining = deadline - time.monotonic()
-                if remaining <= 0:
-                    reject('DOWNLOAD_TIMEOUT')
-                if connection.sock:
-                    connection.sock.settimeout(min(10, remaining))
-                chunk = response.read(1024 * 1024)
-                if not chunk:
-                    break
-                total += len(chunk)
-                if total > MAX_ZIP:
-                    reject('ZIP_SIZE')
-                checksum.update(chunk)
-                output.write(chunk)
-        if not total or (length is not None and total != int(length)):
-            reject('INCOMPLETE_DOWNLOAD')
-        if checksum.hexdigest() != manifest['zipSha256']:
-            reject('ZIP_CHECKSUM')
+        return response, int(length)
+    connection = PinnedHTTPSConnection(host, address)
+    try:
+        _, size = response_for(connection, 'HEAD')
     finally:
         connection.close()
+    # Start all ranges while the signed URL is fresh; bounded parallelism handles slow cross-border links.
+    with open(destination, 'wb') as output:
+        output.truncate(size)
+        def fetch_range(bounds):
+            start, end = bounds
+            connection = PinnedHTTPSConnection(host, address)
+            try:
+                response, length = response_for(connection, 'GET', {'Range': f'bytes={start}-{end}'})
+                if length != end - start + 1 or response.getheader('Content-Range') != f'bytes {start}-{end}/{size}':
+                    reject('CONTENT_RANGE')
+                position = start
+                while position <= end:
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        reject('DOWNLOAD_TIMEOUT')
+                    if connection.sock:
+                        connection.sock.settimeout(min(10, remaining))
+                    chunk = response.read(min(65536, end - position + 1))
+                    if not chunk:
+                        reject('INCOMPLETE_DOWNLOAD')
+                    written = os.pwrite(output.fileno(), chunk, position)
+                    if written != len(chunk):
+                        reject('DISK_WRITE')
+                    position += written
+                if response.read(1):
+                    reject('ZIP_SIZE')
+            finally:
+                connection.close()
+        part = (size + 7) // 8
+        ranges = [(start, min(start + part, size) - 1) for start in range(0, size, part)]
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            for completed, _ in enumerate(pool.map(fetch_range, ranges), 1):
+                print(f'Artifact range {completed}/{len(ranges)} verified.', flush=True)
+    checksum = hashlib.sha256()
+    with open(destination, 'rb') as source:
+        for chunk in iter(lambda: source.read(1024 * 1024), b''):
+            if time.monotonic() >= deadline:
+                reject('DOWNLOAD_TIMEOUT')
+            checksum.update(chunk)
+    if checksum.hexdigest() != manifest['zipSha256']:
+        reject('ZIP_CHECKSUM')
 
 def extract_package(zip_path, destination, manifest):
     # Check the central-directory count before ZipFile allocates entry objects.
@@ -158,7 +185,7 @@ def extract_package(zip_path, destination, manifest):
 def main():
     archive, commit = sys.argv[1:]
     signal.signal(signal.SIGALRM, lambda *_: reject('DOWNLOAD_TIMEOUT'))
-    signal.alarm(180)
+    signal.alarm(DOWNLOAD_SECONDS)
     manifest = read_manifest(sys.stdin.buffer, commit)
     disk = os.statvfs(os.path.dirname(archive))
     if disk.f_bavail * disk.f_frsize < MAX_ZIP + manifest['size'] + 128 * 1024 * 1024:
@@ -181,7 +208,7 @@ if __name__ == '__main__':
         sys.exit(1)
 PY_DOWNLOAD
 )
-timeout 190s python3 -c "$download_code" "$archive" "$commit"
+timeout 1210s python3 -c "$download_code" "$archive" "$commit"
 unset download_code
 python3 - "$archive" "$staging" "$commit" <<'PY_VALIDATE'
 import hashlib, json, os, pathlib, sys, tarfile
