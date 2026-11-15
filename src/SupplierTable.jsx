@@ -24,7 +24,7 @@ function recordFields(record) {
     ['是否申请', display(detail.applicationStatus)],
     ['当前节点', <>{display(detail.currentNode)}{record.status && <small className="cell-secondary">流程状态：{record.status}</small>}</>],
     ['是否支付', <span className={`tag ${detail.paymentStatus === '已支付' ? 'success' : 'neutral'}`}>{detail.paymentStatus}</span>],
-    ['孙立柱备注', display(detail.remark)],
+    ['贾总备注', display(detail.jiaRemark)], ['孙立柱备注', display(detail.remark)],
   ];
 }
 

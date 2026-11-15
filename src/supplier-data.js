@@ -81,6 +81,7 @@ export function supplierRecordDetails(record) {
     applicationStatus: rawField(raw, ['是否提交付款申请单', '是否已申请', '是否申请']) || record.applicationStatus || '',
     currentNode: record.currentNode || rawField(raw, ['当前节点']),
     paymentStatus, paidCents, unpaidCents,
+    jiaRemark: rawField(raw, ['贾总备注', '贾总反馈备注']),
     remark: rawField(raw, ['孙立柱备注']),
   };
 }

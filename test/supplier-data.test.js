@@ -84,8 +84,11 @@ test('供应商汇总使用整数分并拒绝超过安全范围', () => {
 
 test('详情优先使用解析后的当前节点，保留专属备注与原申请日期', () => {
   const detail = supplierRecordDetails({ currentNode: '财务付款', notes: '合并备注不应替代孙立柱备注',
-    raw: { '当前节点': '旧节点', '孙立柱备注': '请确认账期', '2026年11月16日': 0 } });
+    raw: { '当前节点': '旧节点', '贾总反馈备注': '按对账单付款\n保留原文', '孙立柱备注': '请确认账期', '2026年11月16日': 0 } });
   assert.equal(detail.currentNode, '财务付款');
+  assert.equal(detail.jiaRemark, '按对账单付款\n保留原文');
+  assert.equal(supplierRecordDetails({ raw: { '贾总备注': '另一个表头' } }).jiaRemark, '另一个表头');
+  assert.equal(supplierRecordDetails({ notes: '合并备注', raw: { '贾总反馈备注': '' } }).jiaRemark, '');
   assert.equal(detail.remark, '请确认账期');
   assert.deepEqual(detail.installments, [{ date: '2026-11-16', amountCents: 0 }]);
   assert.equal(supplierRecordDetails({ currentNode: '', raw: { '当前节点': '办理中' } }).currentNode, '办理中');
