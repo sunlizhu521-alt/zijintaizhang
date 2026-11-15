@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { CATEGORIES, LEDGER_CATEGORIES, SLOTS } from '../shared/constants.js';
 import { download, queryString, useResource } from './api.js';
-import { can, dateTime, money, monthText, upcomingMonths } from './format.js';
+import { can, dateTime, money, moneyInWan, monthText, upcomingMonths } from './format.js';
 import { Empty, ErrorNotice, IssuesTable, Loading, Notice, RecordsTable } from './components.jsx';
 
 const categoryKeys = Object.keys(CATEGORIES);
@@ -62,7 +62,24 @@ export default function Dashboard({ user }) {
         <div className="section-heading"><div><h2>月度安排</h2><p>单位：元。预估与付款计划可能重叠，分别展示，不直接相加。</p></div><span className="tag neutral">点击月份查看明细</span></div>
         {!data.months?.length ? <Empty title="当前区间暂无计划">可查看全部月份或时间待定记录。</Empty> : <>
           <div className="table-wrap"><table aria-label="月度付款与预估汇总"><thead><tr><th>月份</th>{categoryKeys.map(key => <th key={key} className="numeric">{CATEGORIES[key]}</th>)}</tr></thead><tbody>{data.months.map((row, index) => <tr key={row.month || index}><td><button className="text-button month-button" onClick={() => update('month', row.month || 'pending')}>{monthText(row.month)}</button></td>{categoryKeys.map(key => <td className="numeric" key={key}>{hasCategory(key) ? money(row[key]) : '未上传'}</td>)}</tr>)}</tbody></table></div>
-          <details className="chart-details" open><summary>月度金额对比</summary><div className="chart-legend">{categoryKeys.map(key => <span key={key}><i className={`swatch category-${key}`} />{CATEGORIES[key]}</span>)}</div><div className="monthly-chart" aria-label="月度金额柱形对比">{data.months.map((row, index) => <div className="chart-month" key={row.month || index}><strong>{monthText(row.month)}</strong><div className="chart-bars">{categoryKeys.map(key => <div className="bar-line" key={key}><span className="sr-only">{CATEGORIES[key]}：</span>{hasCategory(key) && <div className={`bar category-${key}`} style={{ width: `${Math.max(row[key] ? 1 : 0, Math.abs(row[key] || 0) / maximum * 100)}%` }} />}<span className="bar-value">{hasCategory(key) ? money(row[key]) : '未上传'}</span></div>)}</div></div>)}</div></details>
+          <details className="chart-details" open>
+            <summary>月度金额对比</summary>
+            <div className="chart-legend">{categoryKeys.map(key => <span key={key}><i className={`swatch category-${key}`} />{CATEGORIES[key]}</span>)}</div>
+            <div className="monthly-chart" aria-label="月度金额柱形对比">{data.months.map((row, index) => {
+              const planCents = LEDGER_CATEGORIES.reduce((sum, key) => sum + row[key], 0);
+              return <div className="chart-month" key={row.month || index}>
+                <div className="chart-month-heading">
+                  <strong>{monthText(row.month)}</strong>
+                  <span className="chart-month-total"><span>付款计划合计</span>{hasSlot('schedule') ? <><b>{money(planCents)} 元</b><span>（{moneyInWan(planCents)} 万元）</span></> : <span>未上传</span>}</span>
+                </div>
+                <div className="chart-bars">{categoryKeys.map(key => <div className="bar-line" key={key}>
+                  <span className="bar-label">{CATEGORIES[key]}</span>
+                  <div className="bar-track" aria-hidden="true">{hasCategory(key) && <div className={`bar category-${key}`} style={{ width: `${Math.max(row[key] ? 1 : 0, Math.abs(row[key] || 0) / maximum * 100)}%` }} />}</div>
+                  <span className="bar-value">{hasCategory(key) ? <><span>{money(row[key])} 元</span><small>{moneyInWan(row[key])} 万元</small></> : '未上传'}</span>
+                </div>)}</div>
+              </div>;
+            })}</div>
+          </details>
         </>}
       </section>
       <section className="panel"><div className="section-heading"><div><h2>供应商明细 <span className="count">{data.records?.length || 0}</span></h2><p>期间计划按当前月份筛选；已付与剩余为该笔记录的原台账金额。</p></div>{can(user, 'export') && <button onClick={exportRows} disabled={exporting}>{exporting ? '正在导出…' : '导出当前结果'}</button>}</div><RecordsTable records={data.records} /></section>

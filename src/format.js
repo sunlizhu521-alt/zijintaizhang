@@ -2,6 +2,10 @@ export function money(cents) {
   if (cents == null || !Number.isFinite(Number(cents))) return '未提供';
   return (Number(cents) / 100).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
+export function moneyInWan(cents) {
+  if (cents == null || !Number.isFinite(Number(cents))) return '未提供';
+  return (Number(cents) / 1_000_000).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
 export function dateTime(value) {
   if (!value) return '—';
   const date = new Date(value);
