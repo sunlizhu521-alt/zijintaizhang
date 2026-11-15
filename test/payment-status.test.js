@@ -88,6 +88,46 @@ test('付款日期只取已付批注且不猜年份，申请日期不能作为�
   }
 });
 
+test('明确付款时间直接代表已付，实际日期优先于核实日期且重复标记不重复计款', () => {
+  const paymentTime = '付款时间（付款节奏跟进）：2026年11月2日';
+  for (const note of [paymentTime, '付款时间(付款节奏跟进): 2026年11月2日', '付款时间：2026年11月2日',
+    `申请日期：2026年10月30日，${paymentTime}`, `${paymentTime}\\`, `11月5日核实-已支付\n${paymentTime}\n${paymentTime}`]) {
+    assert.equal(commentPaymentState(note), 'paid', note);
+    assert.deepEqual(commentPaymentDates(note), ['2026-11-02'], note);
+  }
+  assert.deepEqual(commentPaymentDates('付款时间：2月29日'), ['2月29日']);
+  assert.deepEqual(commentPaymentDates('付款时间：2028年2月29日'), ['2028-02-29']);
+  for (const category of ['negotiated', 'negotiated_normal']) {
+    const result = classify(category, [plan()], { installments: [item(4000, `${paymentTime}\n11月5日-已付`)] });
+    assert.deepEqual([result.plans[0].paidCents, result.plans[0].unpaidCents], [4000, 6000]);
+    assert.deepEqual(result.plans[0].paymentDates, ['2026-11-02']);
+    const direct = classify(category, [plan('2026-11', 10000, paymentTime)], { installments: [item(4000, paymentTime)] });
+    assert.deepEqual([direct.plans[0].paidCents, direct.plans[0].unpaidCents], [10000, 0]);
+  }
+});
+
+test('付款时间须为有效日期，申请/提交时间及预计日期不误判，矛盾仍待核对', () => {
+  for (const note of ['申请日期（付款节奏跟进）：2026年11月2日', '提交时间：2026年11月2日',
+    '预计付款时间：2026年11月2日', '计划付款时间：2026年11月2日']) {
+    assert.equal(commentPaymentState(note), 'none', note);
+    assert.deepEqual(commentPaymentDates(note), [], note);
+  }
+  for (const note of ['付款时间：', '付款时间：2026年2月29日', '付款时间：2026年13月2日',
+    '付款时间：2026年11月2日\n未付款', '付款时间：2026年11月2日\n部分付款',
+    '付款时间：2026年11月2日\n已撤销', '付款时间：2026年11月2日？']) {
+    assert.equal(commentPaymentState(note), 'uncertain', note);
+    const result = classify('negotiated', [plan()], { installments: [item(4000, note)] });
+    assert.equal(result.plans[0].paidCents, null);
+    assert.equal(result.issues[0].code, 'PAYMENT_STATUS_UNCERTAIN');
+  }
+  for (const amount of [0, -10000]) {
+    const result = classify('negotiated', [plan('2026-11', amount, '付款时间：2027年1月2日')]);
+    assert.equal(result.plans[0].paidCents, amount);
+    assert.equal(result.plans[0].unpaidCents, 0);
+    assert.equal(result.plans[0].month, '2026-11');
+  }
+});
+
 const progressRecord = (extra = {}) => ({ key: 'schedule:正常付款:2', slotId: 'schedule', sourceSheet: '正常付款', sourceRow: 2,
   category: 'normal', flowCode: 'MDST-DGFK20261101001', supplier: '样例供应商', payer: '样例主体', amountCents: 10000,
   paidCents: 0, plans: [plan()], ...extra });

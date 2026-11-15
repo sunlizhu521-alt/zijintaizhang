@@ -1,8 +1,12 @@
 export function commentPaymentDates(comment) {
   const dates = [];
   const paymentText = String(comment ?? '').normalize('NFKC').replace(/(?:申请|提交)(?:日期|时间)[^，,;；\n\r。]*/g, '');
-  for (const line of paymentText.split(/[\n\r;；。]/)) {
-    for (const match of line.matchAll(/(?:(\d{4})年)?(\d{1,2})月(\d{1,2})日\s*(?:核实|确认|实际)?\s*[-—－:：,，]?\s*(?:已支付|已付款|已付)(?=$|[\s，,！!])/g)) {
+  // 明确的付款时间优先于“核实-已付”中的核实日期。
+  for (const pattern of [
+    /(?:^|[,，])\s*付款时间\s*(?:\(付款节奏跟进\))?\s*:\s*(?:(\d{4})年)?(\d{1,2})月(\d{1,2})日(?=$|[\s,，!！\\])/g,
+    /(?:(\d{4})年)?(\d{1,2})月(\d{1,2})日\s*(?:核实|确认|实际)?\s*[-—－:：,，]?\s*(?:已支付|已付款|已付)(?=$|[\s，,！!])/g,
+  ]) {
+    for (const line of paymentText.split(/[\n\r;；。]/)) for (const match of line.matchAll(pattern)) {
       const year = match[1] ? Number(match[1]) : null, month = Number(match[2]), day = Number(match[3]);
       // 缺年份只校验月日，不把用于闰日校验的年份写入付款日期。
       const checkYear = year ?? 2000;
@@ -10,13 +14,14 @@ export function commentPaymentDates(comment) {
       if ((year !== null && (year < 1900 || year > 9999)) || date.getUTCFullYear() !== checkYear || date.getUTCMonth() !== month - 1 || date.getUTCDate() !== day) continue;
       dates.push(year === null ? `${month}月${day}日` : `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`);
     }
+    if (dates.length) break;
   }
   return [...new Set(dates)];
 }
 
 export function commentPaymentState(comment) {
   const text = String(comment ?? '').normalize('NFKC');
-  const paid = /已支付|已付款|已付/.test(text);
+  const paid = /已支付|已付款|已付/.test(text) || /(?:^|[\n\r;；。，,])\s*付款时间\s*(?:\(付款节奏跟进\))?\s*:/.test(text);
   const unpaid = /未支付|未付款|未付/.test(text);
   if (!paid) return /部分(?:付款|支付)|(?:付款|支付)部分/.test(text) ? 'uncertain' : unpaid ? 'unpaid' : 'none';
   if (unpaid || /部分|分次|尚未|未确认|未完成|取消|撤销|退款|退回|冲正|失败|预计|拟付|待确认|待核实|疑似|可能|是否|[?？]/.test(text)) return 'uncertain';
@@ -56,7 +61,7 @@ export function classifyPlanPayments({ category, plans, installments = [], warn 
     } else {
       plan.paidCents = Number(paid);
       plan.unpaidCents = Number(total - paid);
-      plan.paymentBasis = direct === 'paid' ? '月支付金额格有明确日期及已付批注，整格金额计已付；分期标记不重复累加。' : paidItems.length ? '按分期金额格中明确日期及已付批注识别已付，其他金额计未付；月份按计划列归属。' : '没有明确日期及已付批注，该月金额全部计未付。';
+      plan.paymentBasis = direct === 'paid' ? '月支付金额格有明确付款时间或日期及已付标记，整格金额计已付；分期标记不重复累加。' : paidItems.length ? '按分期金额格的明确付款时间或日期及已付标记识别已付，其他金额计未付；月份按计划列归属。' : '没有明确付款时间或日期及已付标记，该月金额全部计未付。';
       plan.paymentEvidence = evidence;
     }
     plan.paymentDates = [...new Set(plan.paymentEvidence.flatMap(item => item.paymentDates))];

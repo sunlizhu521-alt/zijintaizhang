@@ -164,6 +164,47 @@ test('新上传解析版本无需派生缓存，过期派生缓存不会覆盖�
   assert.equal(activeData(db).records.length, 3);
 });
 
+test('v4缓存升级后付款时间批注生效，两类谈判均更新且原文件与计划金额不变', async t => {
+  const db = database(t);
+  const book = new ExcelJS.Workbook();
+  await book.xlsx.load(await scheduleBuffer());
+  const sheet = book.getWorksheet('谈判付款');
+  sheet.getCell('J1').value = '2026年11月2日';
+  sheet.getCell('J2').value = 40;
+  sheet.getCell('J2').note = '付款时间（付款节奏跟进）：2026年12月2日';
+  sheet.getCell('H2').note = '申请日期（付款节奏跟进）：2026年11月2日';
+  sheet.getCell('H3').note = '付款时间（付款节奏跟进）：2026年11月2日';
+  const content = Buffer.from(await book.xlsx.writeBuffer());
+  const legacy = await parseWorkbook(content, { slotId: 'schedule', allowLegacyProgress: true });
+  legacy.parserVersion = 4;
+  for (const record of legacy.records) for (const plan of record.plans) {
+    plan.paidCents = 0;
+    plan.unpaidCents = plan.amountCents;
+    plan.paymentDates = [];
+    plan.paymentBasis = '旧规则未识别付款时间批注。';
+    plan.paymentEvidence = [];
+  }
+  seedVersion(db, 'payment-time', 'schedule', content, ['谈判付款', '正常付款'], true, 3);
+  db.prepare('INSERT INTO file_parse_cache VALUES (?,?,?,?,?)')
+    .run('payment-time', 4, JSON.stringify(legacy), legacy.records.length, legacy.issues.length);
+  const original = db.prepare("SELECT * FROM file_versions WHERE id='payment-time'").get();
+  const plansBefore = legacy.records.flatMap(record => record.plans.map(({ month, amountCents }) => ({ month, amountCents })));
+
+  assert.equal(await refreshParsedVersions(db), 1);
+  const cache = db.prepare("SELECT * FROM file_parse_cache WHERE version_id='payment-time'").get();
+  assert.equal(cache.parser_version, PARSER_VERSION);
+  const liveRecords = activeData(db).records;
+  assert.deepEqual(liveRecords.flatMap(record => record.plans.map(({ month, amountCents }) => ({ month, amountCents }))), plansBefore);
+  assert.deepEqual(liveRecords.map(record => [record.category, record.plans[0].paidCents, record.plans[0].unpaidCents]), [
+    ['negotiated', 4000, 6000], ['negotiated_normal', 20000, 0], ['normal', 0, 30000],
+  ]);
+  assert.deepEqual(liveRecords[0].plans[0].paymentDates, ['2026-12-02']);
+  assert.deepEqual(liveRecords[1].plans[0].paymentDates, ['2026-11-02']);
+  assert.deepEqual(versionDetails(db, 'schedule', 'payment-time').records.map(record => record.plans), liveRecords.map(record => record.plans));
+  assert.deepEqual(db.prepare("SELECT * FROM file_versions WHERE id='payment-time'").get(), original);
+  assert.equal(await refreshParsedVersions(db), 0);
+});
+
 test('四个资金槽位均刷新，独立采购订单原文件、缓存、槽位与日志保持不变', async t => {
   const db = database(t);
   seedVersion(db, 'schedule-old', 'schedule', await scheduleBuffer(), ['谈判付款', '正常付款'], true, 3);

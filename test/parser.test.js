@@ -248,6 +248,32 @@ test('谈判表的非分批付款也读取分期批注，付款日期跨年仍�
   assert.deepEqual(records[0].plans[0].paymentDates, ['2027-01-05']);
 });
 
+test('两类谈判的分期和月金额批注写明付款时间即计已付，申请日期不计且月份不迁移', async () => {
+  for (const split of ['是', '否']) {
+    for (const monthly of [false, true]) {
+      const { workbook, negotiated } = scheduleBook();
+      negotiated.getCell('O2').value = split;
+      negotiated.getCell('P1').value = '2026年11月2日';
+      negotiated.getCell('P2').value = 200;
+      negotiated.getCell('P2').note = '付款时间（付款节奏跟进）：2027年1月2日';
+      if (monthly) negotiated.getCell('L2').note = '付款时间（付款节奏跟进）：2027年1月2日';
+      negotiated.getCell('M2').note = '申请日期（付款节奏跟进）：2026年12月2日';
+      negotiated.getCell('N2').note = '付款时间（付款节奏跟进）：2026年12月2日';
+      const { records } = await parseWorkbook(await asBuffer(workbook), { slotId: 'schedule' });
+      const record = records[0];
+      assert.equal(record.category, split === '是' ? 'negotiated' : 'negotiated_normal');
+      assert.deepEqual(record.plans.map(({ month, paidCents, unpaidCents }) => ({ month, paidCents, unpaidCents })), [
+        { month: '2026-11', paidCents: monthly ? 50000 : 20000, unpaidCents: monthly ? 0 : 30000 },
+        { month: '2026-12', paidCents: 0, unpaidCents: 73456 },
+      ]);
+      assert.deepEqual(record.plans[0].paymentDates, ['2027-01-02']);
+      assert.deepEqual(record.plans[1].paymentDates, []);
+      assert.ok(record.plans[0].paymentEvidence.some(evidence => evidence.sourceCell === 'P2'));
+      assert.equal(record.comments.P2, '付款时间（付款节奏跟进）：2027年1月2日');
+    }
+  }
+});
+
 test('付款进度表缺失或缺必需字段拒绝新文件，历史保留并提示未关联', async () => {
   const { workbook, progress } = scheduleBook();
   for (const column of ['A1', 'B1', 'C1', 'D1', 'E1']) {
