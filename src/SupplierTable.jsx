@@ -18,7 +18,7 @@ function recordFields(record) {
     ['摘要', <>{display(record.summary)}{record.flowCode && <small className="cell-secondary">流程号：{record.flowCode}</small>}</>],
     ['总金额', <Amount cents={planAmount(record)} />], ['谈判明细', display(detail.negotiation)], ['是否分批', display(detail.installmentFlag)],
     ['分几批', detail.installmentCount == null ? '未提供' : detail.installmentCountSource === 'declared' ? `${detail.installmentCount} 批` : `已登记 ${detail.installmentCount} 笔`],
-    ['什么时间', batchLines('date')], ['每批付多少钱', batchLines('amountCents')],
+    ['申请时间', batchLines('date')], ['每批付多少钱', batchLines('amountCents')],
     ['是否申请', display(detail.applicationStatus)], ['当前节点', display(detail.currentNode)],
     ['是否支付', <>{detail.paymentStatus}<small className="cell-secondary">已付：{detail.paidCents == null ? '待核对' : `${money(detail.paidCents)} 元`}</small><small className="cell-secondary">未付：{detail.unpaidCents == null ? '待核对' : `${money(detail.unpaidCents)} 元`}</small></>],
     ['孙立柱备注', display(detail.remark)],
@@ -28,7 +28,7 @@ function recordFields(record) {
 function SupplierDetails({ group }) {
   const rows = group.records.map(recordFields);
   return <div className="supplier-detail-content">
-    <p className="supplier-detail-note">共 {rows.length} 笔原始记录。总金额、已付和未付按当前筛选统计；谈判明细及分批安排展示原表全部安排，已登记笔数包含零金额，未登记的不推算。</p>
+    <p className="supplier-detail-note">共 {rows.length} 笔 · 金额按筛选统计，分批安排按原表展示（含零金额）。</p>
     <table className="supplier-detail-wide" aria-label={`${group.supplier || '未填写供应商'}付款明细`}>
       <thead><tr>{rows[0].map(([label]) => <th scope="col" key={label}>{label}</th>)}</tr></thead>
       <tbody>{rows.map((fields, index) => <tr key={index}>{fields.map(([label, value]) => <td className={label === '总金额' ? 'numeric' : undefined} key={label}>{value}</td>)}</tr>)}</tbody>

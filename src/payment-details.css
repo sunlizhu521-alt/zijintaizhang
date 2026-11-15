@@ -1,0 +1,49 @@
+.payment-drilldown{container-type:inline-size;min-width:0}
+.payment-drilldown .pd-summary{display:flex;flex-wrap:wrap;gap:4px 12px;align-items:baseline;margin:0 0 5px;font-size:13px;color:#4d5965}
+.payment-drilldown .pd-summary strong{color:#814825;font-size:14px}
+.payment-drilldown .pd-note{font-size:11px;color:var(--muted);margin:0 0 12px}
+.payment-drilldown .pd-table,.payment-drilldown .pd-fields-table{table-layout:fixed;width:100%;border-collapse:collapse}
+.payment-drilldown .pd-table>thead>tr>th,.payment-drilldown .pd-table>tbody>tr>th,.payment-drilldown .pd-table>tbody>tr>td,.payment-drilldown .pd-table>tfoot>tr>th,.payment-drilldown .pd-table>tfoot>tr>td{border:1px solid #cbd3dc;padding:8px 7px;vertical-align:top;white-space:normal;overflow-wrap:anywhere;line-height:1.5;font-size:12px}
+.payment-drilldown .pd-table>thead>tr>th{background:#edf1f5;color:#465566;font-size:11px}
+.payment-drilldown .pd-table>tbody>tr>th{color:inherit;background:#fff;font-weight:550}
+.payment-drilldown .pd-supplier{width:18%;text-align:left}
+.payment-drilldown .pd-supplier small{display:block;font-size:10px;color:var(--muted);font-weight:400;margin-top:4px}
+.payment-drilldown .pd-payer{width:7%}
+.payment-drilldown .pd-category{width:10%}
+.payment-drilldown .pd-month{width:9%}
+.payment-drilldown .pd-description{width:19%;white-space:pre-wrap!important}
+.payment-drilldown .pd-action{width:7%}
+.payment-drilldown .pd-money{width:10%;text-align:right;font-variant-numeric:tabular-nums}
+.payment-drilldown .pd-amount{display:block;font-weight:550}
+.payment-drilldown .pd-value-compact{display:none}
+.payment-drilldown .pd-amount small{display:block;font-size:10px;font-weight:400;color:#718091;margin-top:2px}
+.payment-drilldown .pd-table>thead>tr>.pd-selected,.payment-drilldown .pd-table>tbody>tr>.pd-selected{background:#fff1d8;color:#784d15}
+.payment-drilldown .pd-table>tbody>tr:hover>th,.payment-drilldown .pd-table>tbody>tr:hover>td{background:#f5f8fb}
+.payment-drilldown .pd-table>tbody>tr:hover>.pd-selected{background:#ffebc0}
+.payment-drilldown .pd-table>tfoot>tr>th,.payment-drilldown .pd-table>tfoot>tr>td{background:#eef2f6;border-top:2px solid #8495a7;font-weight:650;vertical-align:middle}
+.payment-drilldown .pd-table>tfoot>tr>.pd-selected{background:#ffebc0;color:#784d15}
+.payment-drilldown .pd-table>tbody>.pd-evidence-row>td{padding:10px;background:#f6f8fa}
+.payment-drilldown .pd-fields-table{background:white;margin:0 0 8px}
+.payment-drilldown .pd-fields-table th,.payment-drilldown .pd-fields-table td{font-size:12px;white-space:pre-wrap;overflow-wrap:anywhere;padding:7px 10px;border:1px solid #cbd3dc;vertical-align:top}
+.payment-drilldown .pd-fields-table th{width:130px;background:#edf1f5;color:#526172}
+.payment-drilldown .pd-evidence details{margin-top:10px}
+.payment-drilldown .pd-evidence summary{margin-bottom:6px}
+.payment-drilldown .pd-uncertain{color:#93671e}
+.payment-drilldown .pd-compact{display:none}
+.payment-drilldown .text-button{font-size:11px;line-height:1.5}
+@container(max-width:760px){
+  .payment-drilldown .pd-extra{display:none}
+  .payment-drilldown .pd-compact{display:table-cell}
+  .payment-drilldown .pd-supplier>.pd-compact{display:block;font-size:10px;font-weight:400;color:#5e6d7d;line-height:1.6;margin-top:5px}
+  .payment-drilldown .pd-table>thead>tr>.pd-supplier .pd-compact{display:inline}
+  .payment-drilldown .pd-supplier{width:22%}
+  .payment-drilldown .pd-money{width:26%}
+  .payment-drilldown .pd-table>thead>tr>th,.payment-drilldown .pd-table>tbody>tr>th,.payment-drilldown .pd-table>tbody>tr>td,.payment-drilldown .pd-table>tfoot>tr>th,.payment-drilldown .pd-table>tfoot>tr>td{padding:7px 5px;font-size:11px}
+  .payment-drilldown .pd-table>thead>tr>.pd-money,.payment-drilldown .pd-table>tbody>tr>.pd-money,.payment-drilldown .pd-table>tfoot>tr>.pd-money{padding-left:2px;padding-right:2px;font-size:10px}
+  .payment-drilldown .pd-amount{white-space:nowrap}
+  .payment-drilldown .pd-value-full{display:none}
+  .payment-drilldown .pd-value-compact{display:inline}
+  .payment-drilldown .pd-table>tbody>.pd-evidence-row>td{padding:7px 4px}
+  .payment-drilldown .pd-fields-table th{width:85px}
+  .payment-drilldown .pd-fields-table th,.payment-drilldown .pd-fields-table td{padding:7px 6px;font-size:11px}
+}
