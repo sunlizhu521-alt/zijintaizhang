@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { existsSync, readFileSync } from 'node:fs';
 import { API_PATH, BASE_PATH, MAX_UPLOAD_BYTES, ORDER_SLOT } from '../shared/constants.js';
 import { createAuth } from './auth.js';
+import { initializePlanner, createPlannerRouter } from './planner.js';
 import { audit, serializeAudit } from './db.js';
 import { buildDashboard } from './dashboard.js';
 import { runParser } from './parse-job.js';
@@ -66,6 +67,7 @@ function logQuery(db, query, all = false) {
 }
 export function createApp({ db, secureCookies = false, publicOrigin = '', trustProxy = false, distDir = distDefault } = {}) {
   initializeStorage(db);
+  initializePlanner(db);
   const app = express(); app.disable('x-powered-by'); app.set('trust proxy', trustProxy);
   const auth = createAuth(db, { secureCookies });
   app.use(helmet({ contentSecurityPolicy: { directives: {
@@ -104,6 +106,7 @@ export function createApp({ db, secureCookies = false, publicOrigin = '', trustP
   api.use(auth.csrfProtection);
   api.use('/auth', auth.router);
   api.use(auth.authenticate);
+  api.use('/planner', createPlannerRouter(db));
   api.use('/users', auth.userRouter);
   const permission = auth.requirePermission;
   const dashboard = query => { const data = activeData(db); return buildDashboard(data.records, data.issues, data.slots, filtersFrom(query)); };
