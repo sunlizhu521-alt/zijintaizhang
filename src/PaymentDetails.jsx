@@ -3,6 +3,7 @@ import { CATEGORIES } from '../shared/constants.js';
 import { paymentPlanTotals } from '../server/payment-table.js';
 import { Empty, Pager } from './components.jsx';
 import { moneyInWan, monthText } from './format.js';
+import { supplierRecordDetails } from './supplier-data.js';
 import './payment-details.css';
 
 const measures = [['totalCents', '总金额'], ['paidCents', '已付'], ['unpaidCents', '未付']];
@@ -19,7 +20,8 @@ function Evidence({ record, plan }) {
       ['付款时间', plan.paymentDates?.length ? plan.paymentDates.join('、') : '—'], ['判定依据', plan.paymentBasis],
       ['供应商 / 付款主体', `${record.supplier || '—'} / ${record.payer || '—'}`],
       ['类别 / 跟单员', `${CATEGORIES[record.category] || '—'} / ${record.owner || '—'}`],
-      ['摘要', record.summary], ['付款 OA 号', record.flowCode], ['付款申请状态', record.applicationStatus], ['流程状态', record.status],
+      ['摘要', record.summary], ['谈判明细', supplierRecordDetails(record).negotiation],
+      ['付款 OA 号', record.flowCode], ['付款申请状态', record.applicationStatus], ['流程状态', record.status],
       ['当前节点', record.currentNode || record.raw?.['当前节点']],
       ['来源文件', record.filename], ['原表位置', `${record.sourceSheet} · 第 ${record.sourceRow} 行${plan.sourceCell ? ` · ${plan.sourceCell}` : ''}`],
       ['备注', record.notes],
@@ -54,17 +56,17 @@ export default function PaymentDetails({ records = [], measure = 'totalCents' })
   return <div className="payment-drilldown">
     <p className="pd-summary">共 {rows.length} 笔<strong>{selectedLabel}：{moneyInWan(totals[measure])}</strong><span>单位：万元</span></p>
     <div className="pd-table-scroll" tabIndex={0} role="region" aria-label="付款金额明细，可横向滚动"><table className="pd-table" aria-label="汇总金额对应明细">
-      <thead><tr><th scope="col" className="pd-supplier">供应商</th><th scope="col" className="pd-payer">付款主体</th><th scope="col" className="pd-category">类别</th><th scope="col" className="pd-month">月份</th><th scope="col" className="pd-description">摘要</th>{measures.map(([key, label]) => <th scope="col" className={amountClass(key)} key={key}>{label}{measure === key && <span className="sr-only">（当前查看列）</span>}</th>)}<th scope="col" className="pd-action">详情</th></tr></thead>
+      <thead><tr><th scope="col" className="pd-supplier">供应商</th><th scope="col" className="pd-owner">跟单员</th><th scope="col" className="pd-payer">付款主体</th><th scope="col" className="pd-category">类别</th><th scope="col" className="pd-month">月份</th><th scope="col" className="pd-description">摘要</th>{measures.map(([key, label]) => <th scope="col" className={amountClass(key)} key={key}>{label}{measure === key && <span className="sr-only">（当前查看列）</span>}</th>)}<th scope="col" className="pd-action">详情</th></tr></thead>
       <tbody>{rows.slice((page - 1) * 20, page * 20).map(row => <Fragment key={row.id}>
         <tr className={expanded === row.id ? 'pd-expanded-row' : undefined}>
-          <th scope="row" className="pd-supplier">{row.record.supplier || '—'}<small>跟单员：{row.record.owner || '—'}</small></th>
-          <td>{row.record.payer || '—'}</td><td>{CATEGORIES[row.record.category] || '—'}</td><td>{monthText(row.plan.month)}</td><td className="pd-description">{row.record.summary || '—'}</td>
+          <th scope="row" className="pd-supplier">{row.record.supplier || '—'}</th>
+          <td>{row.record.owner || '—'}</td><td>{row.record.payer || '—'}</td><td>{CATEGORIES[row.record.category] || '—'}</td><td>{monthText(row.plan.month)}</td><td className="pd-description">{row.record.summary || '—'}</td>
           {measures.map(([key]) => <td key={key} className={amountClass(key)}><Amount value={row.plan[key === 'totalCents' ? 'amountCents' : key]} /></td>)}
           <td>{detailButton(row)}</td>
         </tr>
-        {expanded === row.id && <tr className="pd-evidence-row"><td colSpan={9}><Evidence record={row.record} plan={row.plan} /></td></tr>}
+        {expanded === row.id && <tr className="pd-evidence-row"><td colSpan={10}><Evidence record={row.record} plan={row.plan} /></td></tr>}
       </Fragment>)}</tbody>
-      <tfoot><tr><th colSpan={5} scope="row">全部合计（{rows.length} 笔）</th>{measures.map(([key]) => <td key={key} className={amountClass(key)}><Amount value={totals[key]} /></td>)}<td /></tr></tfoot>
+      <tfoot><tr><th colSpan={6} scope="row">全部合计（{rows.length} 笔）</th>{measures.map(([key]) => <td key={key} className={amountClass(key)}><Amount value={totals[key]} /></td>)}<td /></tr></tfoot>
     </table></div>
     <Pager page={page} total={rows.length} onChange={value => { setPage(value); setExpanded(null); }} />
   </div>;

@@ -7,13 +7,13 @@
 .payment-drilldown .pd-table>thead>tr>th,.payment-drilldown .pd-table>tbody>tr>th,.payment-drilldown .pd-table>tbody>tr>td,.payment-drilldown .pd-table>tfoot>tr>th,.payment-drilldown .pd-table>tfoot>tr>td{border-bottom:1px solid #f0f3f7;border-right:1px solid #f0f3f7;padding:9px 8px;vertical-align:middle;text-align:center;white-space:normal;overflow-wrap:anywhere;line-height:1.5;font-size:12px}
 .payment-drilldown .pd-table>thead>tr>th{background:#f5f7fa;color:#6b7280;font-size:11px}
 .payment-drilldown .pd-table>tbody>tr>th{color:#1f2a37;background:#fff;font-weight:550}
-.payment-drilldown .pd-supplier{width:18%;position:sticky;left:0;z-index:1;box-shadow:1px 0 0 #e7ecf1}
-.payment-drilldown .pd-supplier small{display:block;font-size:10px;color:#6b7280;font-weight:400;margin-top:3px}
+.payment-drilldown .pd-supplier{width:16%;position:sticky;left:0;z-index:1;box-shadow:1px 0 0 #e7ecf1}
+.payment-drilldown .pd-owner{width:6%}
 .payment-drilldown .pd-payer{width:9%}
-.payment-drilldown .pd-category{width:12%}
-.payment-drilldown .pd-month{width:10%}
-.payment-drilldown .pd-description{width:18%;white-space:pre-wrap!important}
-.payment-drilldown .pd-action{width:9%}
+.payment-drilldown .pd-category{width:11%}
+.payment-drilldown .pd-month{width:9%}
+.payment-drilldown .pd-description{width:17%;white-space:pre-wrap!important}
+.payment-drilldown .pd-action{width:8%}
 .payment-drilldown .pd-money{width:8%;font-variant-numeric:tabular-nums}
 .payment-drilldown .pd-amount{display:block;font-weight:550;white-space:nowrap}
 .payment-drilldown .pd-table>thead>tr>.pd-selected,.payment-drilldown .pd-table>tbody>tr>.pd-selected{background:#e6f8fa;color:#168797}
