@@ -25,7 +25,7 @@ export default function Dashboard({ user }) {
     setActionError(null); setExporting(true);
     try { await download(`/dashboard/export?${query}`, '资金台账查询结果.xlsx'); } catch (err) { setActionError(err); } finally { setExporting(false); }
   }
-  return <div className="page-stack">
+  return <div className="page-stack dashboard-page">
     <div className="page-heading"><div><p className="eyebrow">付款计划与资金预估</p><h1>资金看板</h1><p className="subtitle">先看每月安排，再定位供应商明细。</p></div><button onClick={() => setRefresh(value => value + 1)} disabled={loading}>刷新数据</button></div>
     <section className="panel filters-panel" aria-label="看板筛选">
       <div className="filter-grid">
@@ -41,7 +41,7 @@ export default function Dashboard({ user }) {
     {loading ? <Loading /> : data && <>
       {filters.month !== 'pending' && <PaymentTable key="monthly" table={data.paymentTable} records={data.records} />}
       <PaymentTable key="pending" table={data.pendingPaymentTable} records={data.records} pending />
-      <section className="panel"><div className="section-heading"><div><h2>供应商明细 <span className="count">{data.records?.length || 0}</span></h2><p>展示所选月份及时间待定记录；已付依据可在详情中查看。</p></div>{can(user, 'export') && <button onClick={exportRows} disabled={exporting}>{exporting ? '正在导出…' : '导出当前结果'}</button>}</div><RecordsTable records={data.records} /></section>
+      <section className="panel"><div className="section-heading"><div><h2>供应商明细 <span className="count">{data.records?.length || 0}</span></h2><p>展示所选月份及时间待定记录；已付依据可在详情中查看。</p></div>{can(user, 'export') && <button onClick={exportRows} disabled={exporting}>{exporting ? '正在导出…' : '导出当前结果'}</button>}</div><RecordsTable records={data.records} fitWidth /></section>
       <section className="panel"><div className="section-heading"><div><h2>待核对事项 <span className="count warning">{data.issues?.length || 0}</span></h2><p>提示用于核对原表，不自动更改、删除或合并记录。</p></div></div><IssuesTable issues={data.issues} /></section>
     </>}
   </div>;
