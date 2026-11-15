@@ -180,15 +180,17 @@ export function buildDashboard(records, issues = [], slots = [], filters = {}) {
     if (ledgerCategories.has(record.category)) summary.pendingPlanCents = add(summary.pendingPlanCents, record.selectedPlanCents);
     else summary.pendingForecastCents[record.category] = add(summary.pendingForecastCents[record.category], record.selectedPlanCents);
   }
-  const relevantKeys = new Set(selectedRecords.map(record => record.key));
-  const combinedIssues = [...issues, ...findDuplicateIssues(records),
+  const reviewableRecords = records.filter(record => !normalize(record.flowCode).includes('不支付'));
+  const recordsByKey = new Map(reviewableRecords.map(record => [record.key, record]));
+  const relevantKeys = new Set(selectedRecords.filter(record => recordsByKey.has(record.key)).map(record => record.key));
+  // 从当前需核对记录重建重复提示，避免缓存仍将“不支付”记录列为关联项。
+  const combinedIssues = [...issues.filter(issue => !['DUPLICATE_FLOW', 'POSSIBLE_DUPLICATE'].includes(issue.code)), ...findDuplicateIssues(reviewableRecords),
     ...applicationReviewRecords.map(record => issueFor(record, 'APPLICATION_PARTIAL_REVIEW', record.applicationBasis))].filter(issue =>
     !issue.recordKey || relevantKeys.has(issue.recordKey));
   for (const slot of slots) if (!slot.currentVersionId) combinedIssues.push({
     code: 'MISSING_FILE', severity: 'warning', message: `${slot.label}尚未上传有效文件，相关金额未包含该来源。`,
     slotId: slot.id, sourceSheet: '', sourceRow: null,
   });
-  const recordsByKey = new Map(records.map(record => [record.key, record]));
   const uniqueIssues = [...new Map(combinedIssues.map(issue =>
     [JSON.stringify([issue.code, issue.recordKey, issue.slotId, issue.message]), issue])).values()]
     .map(issue => describeReviewIssue(issue, recordsByKey));

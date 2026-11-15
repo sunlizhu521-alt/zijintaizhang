@@ -261,6 +261,55 @@ test('供应商聚合、Top10及跨年月度趋势均服从同一范围，更新
   assert.equal(data.updatedAt, slots[0].updatedAt);
 });
 
+test('流程号含不支付仅排除待核对，保留金额、零值、待定记录及同供应商其他问题', () => {
+  const flows = ['不支付', '暂不支付', ' 不　支\n付 ', 'MDST-DGFK20261101001（不支付）', '', null, '未支付', 'MDST-DGFK20261101002'];
+  const records = flows.map((flowCode, index) => record(`r${index + 1}`, 'normal', [plan('2026-11', 100 + index), plan(null, 0)], { flowCode }));
+  const original = structuredClone(records);
+  const issues = records.flatMap(row => [
+    { recordKey: row.key, code: 'ZERO_DEFAULTED', message: 'N列空金额按0保存。' },
+    { recordKey: row.key, code: 'PAYMENT_PROGRESS_REVIEW', message: '没有有效流程号，计未付，请核对。' },
+  ]);
+  const slots = [{ id: 'shipment', label: '发货计划预估', currentVersionId: null }];
+  for (const filters of [{ month: '2026-11' }, { month: 'pending' }, { supplier: '供应商甲' }]) {
+    const data = buildDashboard(records, issues, slots, filters);
+    assert.equal(data.records.length, records.length);
+    assert.equal(data.supplierGroups[0].records.length, records.length);
+    assert.equal(data.summary.planCents, filters.month === 'pending' ? 0 : 828);
+    assert.equal(data.summary.remainingCents, data.summary.planCents);
+    assert.equal(data.reviewSuppliers.length, 1);
+    assert.deepEqual(data.reviewSuppliers[0].records.map(row => row.key), ['r5', 'r6', 'r7', 'r8']);
+    assert.equal(data.reviewSuppliers[0].totalCents, 422);
+    assert.equal(data.reviewSuppliers[0].reviewIssues.length, 8);
+    assert.ok(data.issues.every(issue => !issue.recordKey || ['r5', 'r6', 'r7', 'r8'].includes(issue.recordKey)));
+    assert.ok(data.issues.some(issue => issue.code === 'MISSING_FILE'));
+  }
+  const excludedOnly = buildDashboard(records.slice(0, 4), issues);
+  assert.equal(excludedOnly.records.length, 4);
+  assert.deepEqual(excludedOnly.reviewSuppliers, []);
+  assert.deepEqual(excludedOnly.issues, []);
+  assert.deepEqual(records, original);
+});
+
+test('排除不支付后重建重复线索，不保留旧缓存对已排除记录的引用', () => {
+  const excluded = record('r1', 'normal', [plan('2026-11', 100)], { flowCode: '不支付' });
+  const kept = record('r2', 'normal', [plan('2026-11', 100)]);
+  const cached = findDuplicateIssues([excluded, kept]);
+  assert.equal(cached.length, 2);
+  const single = buildDashboard([excluded, kept], cached);
+  assert.deepEqual(single.issues, []);
+  assert.deepEqual(single.reviewSuppliers, []);
+  assert.equal(single.summary.planCents, 200);
+
+  const other = record('r3', 'normal', [plan('2026-12', 100)]);
+  const records = [excluded, kept, other];
+  const duplicate = buildDashboard(records, findDuplicateIssues(records), [], { month: '2026-11' });
+  assert.equal(duplicate.issues.length, 1);
+  assert.equal(duplicate.issues[0].recordKey, kept.key);
+  assert.deepEqual(duplicate.issues[0].relatedRecordKeys, [other.key]);
+  assert.deepEqual(duplicate.issues[0].relatedLocations.map(location => location.sourceRow), [other.sourceRow]);
+  assert.equal(duplicate.reviewSuppliers[0].records.length, 1);
+});
+
 test('疑似重复仅提示，不删除；同一分期记录跨月不误判成两条', () => {
   const a = record('a1', 'negotiated', [plan('2026-11', 100), plan('2026-12', 100)], { flowCode: 'MDST-DGFK20261101001' });
   assert.deepEqual(findDuplicateIssues([a]), []);

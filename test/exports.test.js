@@ -88,3 +88,44 @@ test('待核对导出保留原列及问题，并补具体事项、操作提示�
   const duplicateMessage = data.issues.find(issue => issue.code === 'DUPLICATE_FLOW').message;
   assert.equal(value(sheet, duplicateMessage, '关联位置'), '来源1.xlsx · 正常付款 第3行 · 供应商1');
 });
+
+test('不支付仅排除该笔待核对及旧重复关联，月度和待定导出仍保留全部业务记录与金额', async () => {
+  const flows = ['ＭＤＳＴ－ＤＧＦＫ２０２６１１０１００１（不　支 付）', 'MDST-DGFK20261101001', '未支付'];
+  const records = flows.map((flowCode, i) => ({ key: `schedule:正常付款:${i + 2}`, slotId: 'schedule',
+    category: 'normal', supplier: '同一供应商', payer: '主体甲', filename: '付款.xlsx', sourceSheet: '正常付款', sourceRow: i + 2,
+    flowCode, amountCents: 10212, paidCents: 0, remainingCents: 10212,
+    plans: [{ month: '2026-11', amountCents: 10001, paidCents: 0, unpaidCents: 10001 },
+      { month: null, amountCents: 211, paidCents: 0, unpaidCents: 211 }] }));
+  const messages = records.map(record => `N${record.sourceRow}：金额为空，已按0保存。`);
+  const issues = records.map((record, i) => ({ code: 'ZERO_DEFAULTED', recordKey: record.key, message: messages[i] }));
+  issues.push({ code: 'DUPLICATE_FLOW', recordKey: records[1].key, message: '旧缓存流程号重复提示', relatedRecordKeys: [records[0].key] },
+    { code: 'POSSIBLE_DUPLICATE', recordKey: records[1].key, message: '旧缓存疑似重叠提示', relatedRecordKeys: [records[0].key, records[2].key] });
+  const columnValues = (sheet, header) => {
+    const column = sheet.getRow(1).values.indexOf(header);
+    assert.ok(column > 0, header);
+    return sheet.getRows(2, sheet.rowCount - 1).map(row => row.getCell(column).value);
+  };
+  for (const [month, expectedCents] of [['2026-11', 30003], ['pending', 633]]) {
+    const data = buildDashboard(records, issues, slots, { month });
+    const book = new ExcelJS.Workbook();
+    await book.xlsx.load(await dashboardExport(data));
+    const review = book.getWorksheet('待核对');
+    const exportedMessages = columnValues(review, '问题');
+    assert.ok(!exportedMessages.includes(messages[0]));
+    assert.ok(exportedMessages.includes(messages[1]));
+    assert.ok(exportedMessages.includes(messages[2]));
+    assert.ok(exportedMessages.every(message => !message.includes('旧缓存')));
+    assert.ok(columnValues(review, '原始行').every(row => [3, 4].includes(row)));
+    const related = columnValues(review, '关联位置').filter(Boolean).join('\n');
+    assert.doesNotMatch(related, /第2行/);
+    assert.match(related, /第3行|第4行/);
+    assert.deepEqual(columnValues(book.getWorksheet('筛选明细'), '流程号'), flows);
+    assert.deepEqual(columnValues(book.getWorksheet('付款明细'), '付款OA号'), flows);
+    const paymentAmounts = columnValues(book.getWorksheet('付款明细'), '总金额（元）');
+    assert.deepEqual(paymentAmounts, flows.map(() => (month === 'pending' ? 211 : 10001) / 100));
+    assert.equal(value(book.getWorksheet('统计口径'), '期间计划（含预估）', '金额或说明'), expectedCents / 100);
+    assert.equal(value(book.getWorksheet('统计口径'), '期间未付', '金额或说明'), expectedCents / 100);
+    const summarySheet = book.getWorksheet(month === 'pending' ? '时间待定付款汇总' : '月度付款汇总');
+    assert.equal(value(summarySheet, '总合计', month === 'pending' ? '时间待定合计（元）' : '所选期间合计（元）'), expectedCents / 100);
+  }
+});
