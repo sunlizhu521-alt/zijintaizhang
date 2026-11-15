@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { PARSER_VERSION, SLOTS } from '../shared/constants.js';
+import { ALL_SLOTS, PARSER_VERSION, SLOTS } from '../shared/constants.js';
 import { audit, transaction } from './db.js';
 
 export function initializeStorage(db) {
@@ -28,7 +28,7 @@ export function initializeStorage(db) {
     );
   `);
   const insert = db.prepare('INSERT OR IGNORE INTO file_slots(id) VALUES (?)');
-  SLOTS.forEach(s => insert.run(s.id));
+  ALL_SLOTS.forEach(s => insert.run(s.id));
 }
 
 export function fail(status, message) { return Object.assign(new Error(message), { status }); }
@@ -44,8 +44,8 @@ function versionInfo(row) {
     selectedSheets: JSON.parse(row.selected_sheets_json), current: Boolean(row.current),
   };
 }
-export function listSlots(db) {
-  return SLOTS.map(s => {
+export function listSlots(db, definitions = SLOTS) {
+  return definitions.map(s => {
     const row = db.prepare(`SELECT s.*, v.filename, v.uploaded_by, v.uploaded_at,
       COALESCE(c.record_count, v.record_count) AS record_count,
       COALESCE(c.issue_count, v.issue_count) AS issue_count FROM file_slots s
@@ -99,7 +99,7 @@ export function activateDraft(db, draft, parsed, revision, event) {
     audit(db, { ...event, kind: 'operation', action: '上传并替换文件', target: draft.slot_id, outcome: 'success',
       details: { previousVersionId: slot.current_version_id, versionId: id, filename: draft.filename,
         recordCount: parsed.records.length, issueCount: parsed.issues.length, selectedSheets: parsed.selectedSheets } });
-    return { slot: listSlots(db).find(s => s.id === draft.slot_id), version: { id } };
+    return { slot: listSlots(db, ALL_SLOTS).find(s => s.id === draft.slot_id), version: { id } };
   });
 }
 export function listVersions(db, slotId) {
@@ -123,6 +123,7 @@ export function versionDetails(db, slotId, id) {
     .get(id, PARSER_VERSION);
   const parsed = JSON.parse(cached?.parsed_json ?? row.parsed_json);
   return { version: versionInfo({ ...row, ...cached, current: requireSlot(db, slotId).current_version_id === id }),
+    ...(parsed.kind === 'archive' ? { kind: parsed.kind, sheets: parsed.sheets, selectedSheets: parsed.selectedSheets } : {}),
     records: parsed.records.map(r => ({ ...r, filename: row.filename, versionId: row.id, slotId })),
     issues: parsed.issues.map(i => ({ ...i, versionId: row.id, slotId })) };
 }
@@ -135,14 +136,15 @@ export function restoreVersion(db, slotId, id, revision, event) {
       .run(id, new Date().toISOString(), event.actor, slotId);
     audit(db, { ...event, kind: 'operation', action: '恢复历史版本', target: slotId, outcome: 'success',
       details: { previousVersionId: slot.current_version_id, versionId: id } });
-    return { slot: listSlots(db).find(s => s.id === slotId) };
+    return { slot: listSlots(db, ALL_SLOTS).find(s => s.id === slotId) };
   });
 }
 export function activeData(db) {
   const records = []; const issues = [];
   for (const row of db.prepare(`SELECT v.id,v.slot_id,v.filename,COALESCE(c.parsed_json,v.parsed_json) AS parsed_json FROM file_slots s
     JOIN file_versions v ON v.id=s.current_version_id
-    LEFT JOIN file_parse_cache c ON c.version_id=v.id AND c.parser_version=?`).all(PARSER_VERSION)) {
+    LEFT JOIN file_parse_cache c ON c.version_id=v.id AND c.parser_version=?
+    WHERE s.id IN (${SLOTS.map(() => '?').join(',')}) ORDER BY s.rowid`).all(PARSER_VERSION, ...SLOTS.map(slot => slot.id))) {
     const parsed = JSON.parse(row.parsed_json);
     records.push(...parsed.records.map(r => ({ ...r, slotId: row.slot_id, versionId: row.id, filename: row.filename })));
     issues.push(...parsed.issues.map(i => ({ ...i, slotId: row.slot_id, versionId: row.id })));

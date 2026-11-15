@@ -1,12 +1,12 @@
 import ExcelJS from 'exceljs';
 import yauzl from 'yauzl';
-import { MAX_UPLOAD_BYTES, PARSER_VERSION, SLOTS } from '../shared/constants.js';
+import { ALL_SLOTS, MAX_UPLOAD_BYTES, ORDER_SLOT, PARSER_VERSION } from '../shared/constants.js';
 import { findDuplicateIssues } from './dashboard.js';
 import { classifyPlanPayments, commentPaymentState, isArchived } from './payment-status.js';
 
 const MAX_EXPANDED_BYTES = 200 * 1024 * 1024;
 const MAX_RECORDS = 100000;
-const SLOT_IDS = new Set(SLOTS.map(slot => slot.id));
+const SLOT_IDS = new Set(ALL_SLOTS.map(slot => slot.id));
 const normalize = value => String(value ?? '').normalize('NFKC').replace(/\s+/g, '').trim();
 
 function invalid(message, issues = []) {
@@ -168,6 +168,10 @@ function columnOf(headers, names) {
 }
 
 function sheetMetadata(workbook, slotId) {
+  if (slotId === ORDER_SLOT.id) {
+    if (!workbook.worksheets.length) throw invalid('Excel 文件中没有工作表，请重新保存后上传。');
+    return workbook.worksheets.map(sheet => ({ name: sheet.name, rowCount: sheet.rowCount, columnCount: sheet.columnCount }));
+  }
   return workbook.worksheets.map(sheet => {
     const { headers, rowNumber } = headersOf(sheet);
     const supplier = columnOf(headers, ['供应商', '供应商名称']);
@@ -187,7 +191,7 @@ function sheetMetadata(workbook, slotId) {
 
 export async function inspectWorkbook(buffer, slotId) {
   const workbook = await loadWorkbook(buffer, slotId);
-  return { sheets: sheetMetadata(workbook, slotId) };
+  return { ...(slotId === ORDER_SLOT.id ? { kind: 'archive' } : {}), sheets: sheetMetadata(workbook, slotId) };
 }
 
 function noteOf(cell) {
@@ -199,6 +203,12 @@ export async function parseWorkbook(buffer, { slotId, selectedSheets } = {}) {
   const workbook = await loadWorkbook(buffer, slotId);
   const sheets = sheetMetadata(workbook, slotId);
   if (selectedSheets !== undefined && (!Array.isArray(selectedSheets) || selectedSheets.some(name => typeof name !== 'string'))) throw invalid('工作表选择格式不正确。');
+  if (slotId === ORDER_SLOT.id) {
+    if (selectedSheets !== undefined && (selectedSheets.length !== sheets.length || sheets.some(sheet => !selectedSheets.includes(sheet.name)))) {
+      throw invalid('金蝶采购订单保存完整原文件，请保留全部工作表。');
+    }
+    return { parserVersion: PARSER_VERSION, kind: 'archive', records: [], issues: [], selectedSheets: sheets.map(sheet => sheet.name), sheets };
+  }
   const selected = slotId === 'schedule' ? ['谈判付款', '正常付款'] : [...new Set(selectedSheets ?? sheets.filter(sheet => sheet.defaultSelected).map(sheet => sheet.name))];
   if (!selected.length) throw invalid('请选择至少一张符合格式的工作表。');
   for (const name of selected) {

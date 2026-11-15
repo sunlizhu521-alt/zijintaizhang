@@ -3,8 +3,8 @@ import helmet from 'helmet';
 import multer from 'multer';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { existsSync } from 'node:fs';
-import { API_PATH, BASE_PATH, MAX_UPLOAD_BYTES } from '../shared/constants.js';
+import { existsSync, readFileSync } from 'node:fs';
+import { API_PATH, BASE_PATH, MAX_UPLOAD_BYTES, ORDER_SLOT } from '../shared/constants.js';
 import { createAuth } from './auth.js';
 import { audit, serializeAudit } from './db.js';
 import { buildDashboard } from './dashboard.js';
@@ -114,6 +114,7 @@ export function createApp({ db, secureCookies = false, publicOrigin = '', trustP
     excelResponse(res, '资金台账', buffer);
   });
   api.get('/files', permission('files'), (req, res) => res.json({ slots: listSlots(db) }));
+  api.get('/orders', permission('files'), (req, res) => res.json({ slots: listSlots(db, [ORDER_SLOT]) }));
   const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: MAX_UPLOAD_BYTES, files: 1, fields: 0, parts: 1 },
     fileFilter(req, file, cb) { cb(/\.xlsx$/i.test(file.originalname) ? null : fail(422, '仅支持 .xlsx 文件'), /\.xlsx$/i.test(file.originalname)); } });
   api.post('/files/:slotId/preview', permission('files'), permission('upload'), (req, res, next) => { requireSlot(db, req.params.slotId); next(); },
@@ -121,7 +122,7 @@ export function createApp({ db, secureCookies = false, publicOrigin = '', trustP
       if (!req.file) throw fail(422, '请选择 Excel 文件');
       const { slotId } = req.params;
       const inspected = await runParser('inspect', req.file.buffer, { slotId });
-      const selectedSheets = inspected.sheets.filter(s => s.eligible && s.defaultSelected).map(s => s.name);
+      const selectedSheets = inspected.sheets.filter(s => inspected.kind === 'archive' || (s.eligible && s.defaultSelected)).map(s => s.name);
       let parsed; let validationError;
       try { parsed = await runParser('parse', req.file.buffer, { slotId, selectedSheets }); }
       catch (error) { if (error.status !== 422) throw error; validationError = error.message; parsed = { records: [], issues: error.issues || [] }; }
@@ -131,13 +132,13 @@ export function createApp({ db, secureCookies = false, publicOrigin = '', trustP
       const draft = createDraft(db, { slotId, userId: req.user.id, filename, content: req.file.buffer });
       const categoryCounts = {};
       parsed.records.forEach(r => { categoryCounts[r.category] = (categoryCounts[r.category] || 0) + 1; });
-      res.json({ ...draft, filename, sheets: inspected.sheets, selectedSheets, recordCount: parsed.records.length,
+      res.json({ ...draft, ...(inspected.kind ? { kind: inspected.kind } : {}), filename, sheets: inspected.sheets, selectedSheets, recordCount: parsed.records.length,
         issueCount: parsed.issues.length, issues: parsed.issues, categoryCounts, validationError });
     });
   api.post('/files/:slotId/activate', permission('files'), permission('upload'), async (req, res) => {
     const draft = getDraft(db, req.body.token, req.params.slotId, req.user.id);
     const selectedSheets = req.body.selectedSheets;
-    if (!Array.isArray(selectedSheets) || selectedSheets.length > 100 || selectedSheets.some(s => typeof s !== 'string' || s.length > 100)) throw fail(400, '请选择有效的工作表');
+    if (!Array.isArray(selectedSheets) || selectedSheets.length > (req.params.slotId === ORDER_SLOT.id ? 5000 : 100) || selectedSheets.some(s => typeof s !== 'string' || s.length > 100)) throw fail(400, '请选择有效的工作表');
     const parsed = await runParser('parse', Buffer.from(draft.content), { slotId: req.params.slotId, selectedSheets });
     // A permission reset during workbook parsing must take effect before activation.
     auth.authenticate(req, res, () => permission('files')(req, res, () => permission('upload')(req, res, () => {
@@ -170,6 +171,13 @@ export function createApp({ db, secureCookies = false, publicOrigin = '', trustP
     res.status(404).json({ error: '接口不存在' });
   });
   if (existsSync(path.join(distDir, 'index.html'))) {
+    const ordersHtml = readFileSync(path.join(distDir, 'index.html'), 'utf8')
+      .replace(/<title>[^<]*<\/title>/, '<title>采购订单跟进</title>')
+      .replace(/(<meta\s+name="description"\s+content=")[^"]*(")/, '$1金蝶采购订单原始文件与版本管理$2');
+    app.get(/^\/caigoudingdangenjin\/?$/, (req, res) => {
+      if (!req.path.endsWith('/')) return res.redirect(308, '/caigoudingdangenjin/');
+      res.set('Cache-Control', 'no-store').type('html').send(ordersHtml);
+    });
     app.use(BASE_PATH, express.static(distDir, { index: 'index.html', dotfiles: 'deny', maxAge: 0 }));
     app.get(BASE_PATH, (req, res) => res.redirect(`${BASE_PATH}/`));
   }

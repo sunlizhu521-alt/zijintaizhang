@@ -6,6 +6,8 @@ export const SLOTS = [
   { id: 'after_sales', label: '售后配件预估' },
   { id: 'unregistered', label: '已发货未登记台账预估' },
 ];
+export const ORDER_SLOT = { id: 'kingdee_orders', label: '金蝶采购订单' };
+export const ALL_SLOTS = [...SLOTS, ORDER_SLOT];
 export const CATEGORIES = {
   negotiated: '谈判表-谈判付款', negotiated_normal: '谈判表-正常付款', normal: '正常付款', shipment: '发货计划预估',
   after_sales: '售后配件预估', unregistered: '已发货未登记台账预估',

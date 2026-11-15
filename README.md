@@ -4,6 +4,16 @@
 
 代码仓库：<https://github.com/sunlizhu521-alt/zijintaizhang>。部署状态以 GitHub Actions、健康接口和页面验收结果为准。
 
+## 采购订单跟进
+
+独立入口：<https://129.211.9.242/caigoudingdangenjin/>。使用现有服务与资金台账账号，沿用 `files`、`upload`、`download`、`restore` 权限；原资金台账入口和四个文件槽位保留。
+
+采购页面只有“金蝶采购订单”一个槽位。支持上传、确认保存、下载原文件、查看版本和恢复历史版本；每个版本完整保留上传文件及所有工作表，包括隐藏表与空模板。仅接受不超过 20 MiB 的有效 `.xlsx`，复用现有文件安全检查、解析资源限制、并发版本校验和操作记录。
+
+本阶段只归档原文件，不按财务模板解析订单，不推算订单数量、金额或跟进状态。订单文件不参与资金看板、付款汇总与资金缺失来源计数。原文件保存在现有 SQLite 数据库并纳入原发布备份。
+
+新页面继续请求 `/zijintaizhang/api`，保持既有会话 Cookie 路径；`GET /orders` 返回订单槽位，上传和历史操作复用 `/files/kingdee_orders/...`。首次发布需在现有 HTTPS server 中增加 `deploy/nginx-location.conf.example` 的 `/caigoudingdangenjin` 两个 location，校验配置后 reload；不新增端口、证书或账号。
+
 ## 架构
 
 - 前端：React 19 + Vite，页面和静态资源前缀为 `/zijintaizhang/`。
