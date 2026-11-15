@@ -8,7 +8,7 @@ const monthNumber = value => value ? Number(value.slice(0, 4)) * 12 + Number(val
 
 function add(a, b) {
   const result = a + b;
-  if (!Number.isSafeInteger(result)) throw Object.assign(new Error('汇总金额超过可安全计算范围。'), { status: 422 });
+  if (!Number.isSafeInteger(a) || !Number.isSafeInteger(b) || !Number.isSafeInteger(result)) throw Object.assign(new Error('汇总金额超过可安全计算范围。'), { status: 422 });
   return result;
 }
 
@@ -89,56 +89,95 @@ function validateFilters(filters) {
   }
 }
 
+const submittedStatuses = new Set(['是', '已提交', '已申请', '已经提交', '已经申请', '已经提交全部',
+  '已提交全部', '全部已提交', '已全部提交', '全部已申请', '已全部申请', '已提交付款申请单']);
+
+function applicationOf(record) {
+  const flow = normalize(record.flowCode).toUpperCase();
+  if (/^[A-Z0-9_-]{6,}$/.test(flow) && /\d{5}/.test(flow)) {
+    return { applicationState: 'applied', applicationBasis: '已有有效付款 OA 号' };
+  }
+  const status = normalize(record.applicationStatus);
+  if (submittedStatuses.has(status)) return { applicationState: 'applied', applicationBasis: `申请状态为“${record.applicationStatus}”` };
+  if (/部分/.test(status) && /提交|申请/.test(status)) {
+    return { applicationState: 'review', applicationBasis: '仅标记部分申请，且无有效付款 OA 号或对应申请金额；申请金额待核对' };
+  }
+  return { applicationState: 'unapplied', applicationBasis: '未确认已提交申请，且无有效付款 OA 号' };
+}
+
+function scopedRecord(record, plans) {
+  const totals = paymentPlanTotals(plans);
+  return { ...record, ...applicationOf(record), selectedPlans: plans, selectedPlanCents: totals.totalCents,
+    selectedPaidCents: totals.paidCents, selectedUnpaidCents: totals.unpaidCents };
+}
+
+function supplierGroups(records) {
+  const grouped = new Map();
+  for (const record of records) {
+    const supplier = String(record.supplier ?? '').trim();
+    if (!grouped.has(supplier)) grouped.set(supplier, { supplier, categories: [], months: [], records: [] });
+    const group = grouped.get(supplier);
+    group.records.push(record);
+    if (!group.categories.includes(record.category)) group.categories.push(record.category);
+    for (const plan of record.selectedPlans) if (!group.months.includes(plan.month ?? null)) group.months.push(plan.month ?? null);
+  }
+  return [...grouped.values()].map(group => {
+    const totals = paymentPlanTotals(group.records.flatMap(record => record.selectedPlans));
+    group.months.sort((a, b) => a === null ? 1 : b === null ? -1 : a.localeCompare(b));
+    return { ...group, amountCents: totals.totalCents, paidCents: totals.paidCents, unpaidCents: totals.unpaidCents, uncertainCount: totals.uncertainCount };
+  });
+}
+
 export function buildDashboard(records, issues = [], slots = [], filters = {}) {
   validateFilters(filters);
   const relevant = records.filter(record => ['supplier', 'payer', 'owner', 'category'].every(name =>
     !filters[name] || normalize(record[name]) === normalize(filters[name])));
-  const monthMatches = month => {
-    if (filters.month) return filters.month === 'pending' ? month === null : month === null || month === filters.month;
-    // 未明确月份始终单列，且不计入期间金额卡片。
-    return month === null || ((!filters.from || month >= filters.from) && (!filters.to || month <= filters.to));
-  };
+  const pending = filters.month === 'pending';
+  const monthMatches = month => pending ? month === null : month !== null &&
+    (filters.month ? month === filters.month : (!filters.from || month >= filters.from) && (!filters.to || month <= filters.to));
+  const select = matches => relevant.flatMap(record => {
+    const plans = record.plans.filter(plan => matches(plan.month));
+    return plans.length ? [scopedRecord(record, plans)] : [];
+  });
+  const selectedRecords = select(monthMatches);
+  const pendingRecords = pending ? selectedRecords : select(month => month === null);
+  const plans = selectedRecords.flatMap(record => record.selectedPlans);
+  const totals = paymentPlanTotals(plans);
+  const applicationReviewRecords = selectedRecords.filter(record => record.applicationState === 'review' && record.selectedUnpaidCents !== 0);
+  const appliedPlans = selectedRecords.filter(record => record.applicationState === 'applied').flatMap(record => record.selectedPlans);
+  const unappliedPlans = selectedRecords.filter(record => record.applicationState === 'unapplied').flatMap(record => record.selectedPlans);
   const summary = {
-    planCents: 0, paidCents: 0, remainingCents: 0,
+    planCents: totals.totalCents, paidCents: totals.paidCents, remainingCents: totals.unpaidCents,
+    appliedUnpaidCents: applicationReviewRecords.length ? null : paymentPlanTotals(appliedPlans).unpaidCents,
+    unappliedUnpaidCents: applicationReviewRecords.length ? null : paymentPlanTotals(unappliedPlans).unpaidCents,
+    applicationReviewCount: applicationReviewRecords.length,
+    applicationReviewCents: paymentPlanTotals(applicationReviewRecords.flatMap(record => record.selectedPlans)).unpaidCents,
+    uncertainCount: totals.uncertainCount,
     forecastCents: { shipment: 0, after_sales: 0, unregistered: 0 },
     pendingPlanCents: 0, pendingForecastCents: { shipment: 0, after_sales: 0, unregistered: 0 },
-    missingPaidCount: 0, missingRemainingCount: 0, ledgerRecordCount: 0,
+    missingPaidCount: selectedRecords.filter(record => record.selectedPaidCents === null).length,
+    missingRemainingCount: selectedRecords.filter(record => record.selectedUnpaidCents === null).length,
+    ledgerRecordCount: selectedRecords.filter(record => ledgerCategories.has(record.category)).length,
     missingSourceCount: slots.filter(slot => !slot.currentVersionId).length,
-    scopeLabel: '付款计划按所选月份；台账累计已付与剩余仅受供应商、付款主体、跟单员、类别筛选，不受月份筛选。',
+    scopeLabel: pending ? '时间待定范围，包含三类预估；已付和未付按付款依据统计。' : '所选期间，包含三类预估，不含时间待定；已付和未付按付款依据统计。',
   };
   const monthly = new Map();
-  const selectedRecords = [];
-  for (const record of relevant) {
-    if (ledgerCategories.has(record.category)) {
-      summary.ledgerRecordCount++;
-      if (record.paidCents === null) summary.missingPaidCount++;
-      else summary.paidCents = add(summary.paidCents, record.paidCents);
-      if (record.remainingCents === null) summary.missingRemainingCount++;
-      else summary.remainingCents = add(summary.remainingCents, record.remainingCents);
-    }
-    const plans = record.plans.filter(plan => monthMatches(plan.month));
-    if (!plans.length) continue;
-    let selectedPlanCents = 0;
-    for (const plan of plans) {
-      selectedPlanCents = add(selectedPlanCents, plan.amountCents);
+  for (const record of selectedRecords) {
+    if (!ledgerCategories.has(record.category)) summary.forecastCents[record.category] = add(summary.forecastCents[record.category], record.selectedPlanCents);
+    for (const plan of record.selectedPlans) {
       const month = plan.month ?? 'pending';
       if (!monthly.has(month)) monthly.set(month, { month, ...Object.fromEntries(Object.keys(CATEGORIES).map(category => [category, 0])) });
       const line = monthly.get(month);
       line[record.category] = add(line[record.category], plan.amountCents);
-      if (ledgerCategories.has(record.category)) {
-        const target = plan.month === null ? 'pendingPlanCents' : 'planCents';
-        summary[target] = add(summary[target], plan.amountCents);
-      } else {
-        const target = plan.month === null ? summary.pendingForecastCents : summary.forecastCents;
-        target[record.category] = add(target[record.category], plan.amountCents);
-      }
     }
-    const selectedTotals = paymentPlanTotals(plans);
-    selectedRecords.push({ ...record, selectedPlanCents, selectedPlans: plans,
-      selectedPaidCents: selectedTotals.paidCents, selectedUnpaidCents: selectedTotals.unpaidCents });
   }
-  const relevantKeys = new Set(relevant.map(record => record.key));
-  const combinedIssues = [...issues, ...findDuplicateIssues(records)].filter(issue =>
+  for (const record of pendingRecords) {
+    if (ledgerCategories.has(record.category)) summary.pendingPlanCents = add(summary.pendingPlanCents, record.selectedPlanCents);
+    else summary.pendingForecastCents[record.category] = add(summary.pendingForecastCents[record.category], record.selectedPlanCents);
+  }
+  const relevantKeys = new Set(selectedRecords.map(record => record.key));
+  const combinedIssues = [...issues, ...findDuplicateIssues(records),
+    ...applicationReviewRecords.map(record => issueFor(record, 'APPLICATION_PARTIAL_REVIEW', record.applicationBasis))].filter(issue =>
     !issue.recordKey || relevantKeys.has(issue.recordKey));
   for (const slot of slots) if (!slot.currentVersionId) combinedIssues.push({
     code: 'MISSING_FILE', severity: 'warning', message: `${slot.label}尚未上传有效文件，相关金额未包含该来源。`,
@@ -148,15 +187,41 @@ export function buildDashboard(records, issues = [], slots = [], filters = {}) {
     [JSON.stringify([issue.code, issue.recordKey, issue.slotId, issue.message]), issue])).values()];
   const option = field => [...new Set(records.map(record => record[field]).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'zh-CN'));
   const months = [...monthly.values()].sort((a, b) => a.month === 'pending' ? 1 : b.month === 'pending' ? -1 : a.month.localeCompare(b.month));
+  const groups = supplierGroups(selectedRecords);
+  const reviewKeys = new Set(uniqueIssues.map(issue => issue.recordKey).filter(Boolean));
+  const reviews = new Map();
+  for (const record of selectedRecords) {
+    if (!reviewKeys.has(record.key)) continue;
+    if (!reviews.has(record.supplier)) reviews.set(record.supplier, { supplier: record.supplier, totalCents: 0, records: [] });
+    const group = reviews.get(record.supplier);
+    group.totalCents = add(group.totalCents, record.amountCents);
+    const reviewBalanceMismatch = record.paidCents != null && record.remainingCents != null &&
+      BigInt(record.paidCents) + BigInt(record.remainingCents) !== BigInt(record.amountCents);
+    group.records.push({ ...record, reviewBalanceMismatch,
+      reviewRemainingCents: record.remainingCents ?? (record.paidCents == null ? null : add(record.amountCents, -record.paidCents)) });
+  }
+  const updatedAt = slots.filter(slot => slot.currentVersionId).map(slot => Number.isFinite(Date.parse(slot.updatedAt)) ? slot.updatedAt : slot.uploadedAt)
+    .filter(value => Number.isFinite(Date.parse(value)))
+    .sort((a, b) => Date.parse(b) - Date.parse(a))[0] ?? new Date().toISOString();
   return {
     summary,
     months,
     paymentTable: buildPaymentTable(selectedRecords, months.filter(row => row.month !== 'pending').map(row => row.month), slots),
-    pendingPaymentTable: buildPaymentTable(selectedRecords, ['pending'], slots),
+    pendingPaymentTable: buildPaymentTable(pendingRecords, ['pending'], slots),
     records: selectedRecords,
+    pendingRecords,
+    supplierGroups: groups,
+    pendingSupplierGroups: pending ? groups : supplierGroups(pendingRecords),
+    topSuppliers: groups.filter(group => group.unpaidCents !== null && group.unpaidCents > 0)
+      .sort((a, b) => b.unpaidCents - a.unpaidCents || a.supplier.localeCompare(b.supplier, 'zh-CN'))
+      .slice(0, 10).map(({ supplier, unpaidCents, uncertainCount }) => ({ supplier, unpaidCents, uncertainCount })),
+    monthlyTrend: months.filter(row => row.month !== 'pending').map(({ month }) => ({ month,
+      ...paymentPlanTotals(plans.filter(plan => plan.month === month)) })),
+    appliedUnpaidRecords: selectedRecords.filter(record => record.applicationState === 'applied' && record.selectedUnpaidCents !== 0),
+    reviewSuppliers: [...reviews.values()],
     issues: uniqueIssues,
     options: { suppliers: option('supplier'), payers: option('payer'), owners: option('owner'),
       months: [...new Set(records.flatMap(record => record.plans.map(plan => plan.month)).filter(Boolean))].sort() },
-    slots,
+    slots, updatedAt,
   };
 }

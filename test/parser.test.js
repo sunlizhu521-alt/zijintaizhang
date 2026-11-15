@@ -9,6 +9,22 @@ const forecastHeaders = ['预估付款月份', '供应商名称', '付款主体'
 const negotiatedHeaders = ['创跟单员', '供应商', '付款主体', '对公付款0A流程号', '摘要', 'OA-申请付款金额', '应付款时间', '已付金额', '剩余付款金额', '是否结清', '流程状态', '2026年11月支付', '2026年12月支付', '备注', '是否谈判分批'];
 const normalHeaders = ['跟单员', '供应商名称', '付款主体', '对公付款0A流程号', '摘要', '本次申请付款金额', '应付时间', '已付金额', '剩余金额', '是否结清', '流程状态'];
 
+test('申请字段三种表头与可选当前节点均进入独立解析字段，原始备注不改', async () => {
+  for (const alias of ['是否提交付款申请单', '是否已申请', '是否申请']) {
+    const workbook = new ExcelJS.Workbook();
+    forecastSheet(workbook, '跟单甲', [['2026-11', '供应商甲', '主体甲', '摘要', 123.45, '30天', '原备注', '已提交', '财务审核', '仅孙立柱备注']],
+      [...forecastHeaders, alias, '当前节点', '孙立柱备注']);
+    const parsed = await parseWorkbook(await asBuffer(workbook), { slotId: 'shipment' });
+    assert.equal(parsed.records[0].applicationStatus, '已提交');
+    assert.equal(parsed.records[0].currentNode, '财务审核');
+    assert.equal(parsed.records[0].raw[alias], '已提交');
+    assert.equal(parsed.records[0].raw['孙立柱备注'], '仅孙立柱备注');
+  }
+  const { workbook } = scheduleBook();
+  const parsed = await parseWorkbook(await asBuffer(workbook), { slotId: 'schedule' });
+  assert.ok(parsed.records.every(record => record.applicationStatus === '' && record.currentNode === ''));
+});
+
 async function asBuffer(workbook) { return Buffer.from(await workbook.xlsx.writeBuffer()); }
 function forecastSheet(workbook, name, rows, headers = forecastHeaders) {
   const sheet = workbook.addWorksheet(name);

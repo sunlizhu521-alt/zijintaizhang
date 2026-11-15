@@ -397,7 +397,8 @@ export async function parseWorkbook(buffer, { slotId, selectedSheets, allowLegac
         supplier, payer, summary: textOf(row.getCell(summaryCol)),
         flowCode: getText(['对公付款OA号', '对公付款OA流程号', '对公付款0A流程号', '流程编号']) || (slotId !== 'schedule' ? notes.join('\n').match(/MDST-DGFK\d+/)?.[0] ?? '' : ''),
         amountCents, paidCents, remainingCents, status, settled,
-        applicationStatus: getText(['是否提交付款申请单']), dueDate: date?.date ?? null,
+        applicationStatus: getText(['是否提交付款申请单', '是否已申请', '是否申请']),
+        currentNode: getText(['当前节点']), dueDate: date?.date ?? null,
         notes: notes.join('\n'), plans, raw, comments,
       });
       if (records.length > MAX_RECORDS) throw invalid('文件有效记录超过 100,000 条，请拆分后上传。');

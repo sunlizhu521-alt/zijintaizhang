@@ -1,0 +1,98 @@
+.funds-shell,.funds-auth{--accent:#1AA3B5;--accent-soft:#E6F8FA;--border:#E5EAF0;--muted:#6B7280;--panel:#fff;color:#1F2A37;background:#F4F7FB}
+body:has(.funds-shell),body:has(.funds-auth){background:#F4F7FB}
+.funds-shell{grid-template-columns:200px minmax(0,1fr)}
+.funds-shell main{padding:24px;max-width:none;margin:0}
+.funds-shell .sidebar{padding:24px 16px 18px;border-right-color:#E9EDF3}
+.funds-shell .sidebar-description{margin-bottom:20px}
+.funds-shell .brand-mark,.funds-auth .brand-mark{background:#2BB8C6;box-shadow:none;border-radius:12px}
+.funds-shell .sidebar nav button.active{color:#168B9B;background:#E6F8FA}
+.funds-shell .sidebar nav button:hover{background:#F0FAFB}
+.funds-shell .avatar{color:#178F9F;background:#E6F8FA}
+.funds-shell .panel{border:1px solid #EDF1F5;border-radius:16px;box-shadow:0 8px 24px rgba(31,42,55,.05);padding:18px 20px}
+.funds-shell button,.funds-shell input,.funds-shell select,.funds-auth button,.funds-auth input{border-radius:9px}
+.funds-shell button:hover:not(:disabled),.funds-auth button:hover:not(:disabled){border-color:#64C9D3;background:#F0FAFB}
+.funds-shell button.primary,.funds-auth button.primary{background:#1AA3B5;border-color:#1AA3B5}
+.funds-shell button.primary:hover:not(:disabled),.funds-auth button.primary:hover:not(:disabled){background:#168C9C}
+.funds-shell :is(input,select,button,a,summary):focus-visible,.funds-auth :is(input,button):focus-visible{outline:3px solid #92DAE3;outline-offset:2px}
+.funds-shell .text-button{color:#168E9E}
+.funds-shell .auth-card,.funds-auth .auth-card{border-radius:16px;border-color:#E5EAF0;box-shadow:0 8px 24px rgba(31,42,55,.05)}
+.funds-auth{background:radial-gradient(ellipse at 20% 10%,#E6F8FA,transparent 45%),#F4F7FB}
+.funds-shell table th,.funds-shell table td,.funds-shell table .numeric{vertical-align:middle;text-align:center!important;border-color:#F0F3F7}
+.funds-shell table th{background:#F5F7FA}
+.funds-shell .table-wrap{border-color:#E9EDF3;border-radius:9px;overflow:auto}
+.funds-shell .tag{border-radius:20px}
+.funds-shell .modal{border-radius:16px;color:#1F2A37}
+.dashboard-page{gap:16px;min-width:0}
+.dashboard-page h1{font-size:26px;font-weight:700;letter-spacing:0}
+.dashboard-page .brief-heading .subtitle{font-size:11px;margin-top:4px}
+.dashboard-page .heading-actions{display:flex;gap:10px;flex-wrap:wrap;align-items:center;justify-content:flex-end}
+.dashboard-page .refresh-button{color:#168F9E;border-color:#55BFCA;background:transparent}
+.dashboard-page .back-brief{display:block;font-size:12px;min-height:24px;margin-bottom:4px}
+.dashboard-page .brief-filters{padding:12px 18px;position:relative;z-index:4;overflow:visible}
+.brief-filter-fields{display:flex;align-items:end;gap:16px;flex-wrap:wrap}
+.brief-filter-fields>label{width:185px;min-width:140px;font-size:12px;gap:4px}
+.brief-filter-fields>label:has(input[type=month]){width:155px}
+.brief-filter-fields input,.brief-filter-fields select{min-height:35px;padding:6px 10px;font-size:12px}
+.range-label{font-size:11px;color:#6B7280;margin:auto 0 8px auto}
+.supplier-search{position:relative;flex:0 1 340px;min-width:210px}
+.supplier-search>label{font-size:12px;margin-bottom:4px}
+.supplier-search-control{display:flex;gap:9px;align-items:center}
+.supplier-search-control input{min-width:0}
+.supplier-search-control button{font-size:11px;flex:none}
+.supplier-options{position:absolute;top:100%;left:0;right:0;z-index:20;background:white;max-height:270px;overflow:auto;box-shadow:0 8px 24px #1F2A3720;border:1px solid #E5EAF0;border-radius:9px;margin-top:5px;padding:4px}
+.supplier-options button{display:block;width:100%;text-align:left;white-space:normal;font-size:12px;border:0;padding:8px 10px;min-height:32px}
+.supplier-options button.highlighted,.supplier-options button[aria-selected=true]{background:#E6F8FA;color:#168E9E}
+.kpi-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px}
+.funds-shell .kpi-card{border:1px solid transparent;border-radius:16px;min-width:0;text-align:left;padding:17px 18px;min-height:105px;white-space:normal;box-shadow:0 8px 24px rgba(31,42,55,.025)}
+.kpi-card.blue{--tone:#4C8DFF;background:#E8F1FF}.kpi-card.green{--tone:#2DBE6C;background:#E7F8EF}.kpi-card.orange{--tone:#FF8A3D;background:#FFF0E6}.kpi-card.purple{--tone:#8B6CFF;background:#F1E9FF}
+.funds-shell .kpi-card:hover:not(:disabled){border-color:var(--tone);filter:brightness(.985)}
+.kpi-label{font-size:12px;display:flex;align-items:center;gap:9px;color:#4B5563}
+.kpi-label i{height:15px;width:15px;border:4px solid var(--tone);border-radius:50%;flex:none}
+.kpi-value{display:flex;align-items:baseline;gap:6px;flex-wrap:wrap;font-size:clamp(22px,2.2vw,32px);font-weight:700;line-height:1.15;font-variant-numeric:tabular-nums;margin-top:13px;color:#1F2A37}
+.kpi-value small{font-size:11px;font-weight:400;color:#6B7280}
+.brief-data-note{display:flex;gap:10px;flex-wrap:wrap;align-items:center;font-size:11px;color:#826537;margin:-8px 4px}
+.brief-data-note button{font-size:11px;min-height:22px}
+.brief-charts{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.35fr);gap:16px}
+.dashboard-page .section-heading{margin-bottom:12px;align-items:center}
+.dashboard-page .section-heading h2{font-size:16px}
+.unit-label{font-size:11px;color:#6B7280;font-weight:400}
+.top-table-scroll{height:219px;overflow:auto}
+.top-table-scroll table{table-layout:fixed;font-size:11px}
+.top-table-scroll th:first-child{width:74%}
+.top-table-scroll th{position:sticky;top:0;z-index:1;font-size:10px}
+.top-table-scroll th,.top-table-scroll td{padding:5px 8px;line-height:1.3}
+.top-table-scroll .text-button{font-size:11px;min-height:20px;text-align:center;line-height:1.4;white-space:normal}
+.trend-scroll{overflow:auto;max-width:100%;height:219px;display:flex;align-items:center}
+.trend-scroll svg{display:block;width:100%;height:210px;flex:none}
+.trend-legend{display:flex;gap:12px;align-items:center;font-size:10px;color:#6B7280}
+.trend-legend>span{display:flex;align-items:center;gap:5px}
+.trend-legend>span:before{content:'';width:8px;height:8px;border-radius:2px;background:#2BB8C6}
+.trend-legend>.unpaid:before{background:#4C8DFF}
+.brief-empty{padding:28px 8px;text-align:center;color:#6B7280;font-size:12px;margin:0}
+.dashboard-page .brief-scroll-table{overflow:auto}
+.brief-scroll-table table{min-width:900px;table-layout:fixed}
+.brief-scroll-table th,.brief-scroll-table td{padding:8px 10px;white-space:normal;overflow-wrap:anywhere;line-height:1.4;font-size:11px}
+.brief-scroll-table th:first-child,.brief-scroll-table td:first-child{position:sticky;left:0;background:white;min-width:190px;width:23%;z-index:1}
+.brief-scroll-table th:first-child{background:#F5F7FA;z-index:2}
+.brief-scroll-table .cell-secondary{font-size:10px;margin:3px auto 0}
+.brief-scroll-table tfoot th,.brief-scroll-table tfoot td{background:#E6F8FA;font-weight:600}
+.review-records table{min-width:1200px}
+.review-records th:first-child,.review-records td:first-child{width:200px}
+.review-records th:last-child{width:200px}
+.application-review-note{font-size:11px;margin:9px 0 0;color:#826537}
+.application-review-note button{font-size:11px;min-height:22px;margin-left:5px}
+.ledger-tabs{min-width:0;overflow:auto;gap:22px;flex:none}
+.ledger-tabs button{flex:none}
+.funds-shell .dashboard-page .pagination{margin-top:10px;font-size:11px}
+.funds-shell .dashboard-page table[aria-label="待核对事项"] td{white-space:normal;overflow-wrap:anywhere}
+@media(max-width:1100px){.funds-shell{grid-template-columns:180px minmax(0,1fr)}.funds-shell main{padding:20px}.funds-shell .kpi-card{padding:15px 13px}.kpi-value{font-size:24px}.range-label{width:100%;margin:0}}
+@media(max-width:900px){.funds-shell{grid-template-columns:minmax(0,1fr)}.funds-shell .sidebar{padding:14px 20px 0}.funds-shell main{padding:20px}.funds-shell .sidebar nav button.active{background:transparent}.funds-shell .sidebar nav{gap:16px}.funds-shell .sidebar-description{display:none}.brief-charts{grid-template-columns:1fr 1fr}}
+@media(max-width:620px){.funds-shell main{padding:18px 12px}.funds-shell .sidebar{padding:12px 14px 0}.funds-shell .panel{padding:14px 12px}.dashboard-page{gap:13px}.brief-heading{flex-wrap:wrap}.dashboard-page h1{font-size:23px}.dashboard-page .heading-actions{gap:8px}.heading-actions button{font-size:12px;padding:7px 10px}.brief-filter-fields{gap:12px}.brief-filter-fields>label{width:100%;min-width:0}.brief-filter-fields>label:has(input[type=month]){flex:1;width:auto}.supplier-search{flex:1 1 100%;min-width:0}.kpi-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.funds-shell .kpi-card{padding:15px 12px;min-height:100px}.kpi-value{font-size:23px}.kpi-label{font-size:11px;gap:6px}.brief-charts{grid-template-columns:minmax(0,1fr)}.range-label{font-size:10px}.ledger-tabs{gap:20px}.trend-scroll svg{min-width:340px}.dashboard-page .section-heading h2{font-size:15px}.dashboard-page .section-heading button{font-size:11px}}
+
+.applied-scroll{max-height:350px}
+.applied-scroll thead th{position:sticky;top:0;z-index:2}
+.applied-scroll thead th:first-child{z-index:3}
+.applied-scroll tfoot th,.applied-scroll tfoot td{position:sticky;bottom:0;z-index:2}
+.applied-scroll td{padding:6px 8px}
+.applied-scroll .tag{padding:1px 5px;font-size:10px}
+.application-basis{display:inline-block;margin-left:5px;color:#6B7280;font-size:10px;white-space:nowrap}

@@ -3,7 +3,8 @@ export function money(cents) {
   return (Number(cents) / 100).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 export function moneyInWan(cents) {
-  if (cents == null || !Number.isFinite(Number(cents))) return '未提供';
+  if (cents == null || !Number.isFinite(Number(cents))) return '待核对';
+  if (Number(cents) === 0) return '—';
   return (Number(cents) / 1_000_000).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 export function dateTime(value) {

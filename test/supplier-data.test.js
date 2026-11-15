@@ -54,6 +54,12 @@ test('支付状态沿已解析的所选计划，不使用累计已付和归档�
   assert.equal(uncertain.paymentStatus, '待核对');
   assert.equal(uncertain.paidCents, null);
   assert.equal(supplierRecordDetails({}).paymentStatus, '待核对');
+  const serverUnknown = supplierRecordDetails({ plans: [plan('2026-11', 0)], selectedPaidCents: null, selectedUnpaidCents: null });
+  assert.equal(serverUnknown.paidCents, null);
+  assert.equal(serverUnknown.paymentStatus, '待核对');
+  const serverZero = supplierRecordDetails({ plans: [plan('2026-11', 0)], selectedPaidCents: 0, selectedUnpaidCents: 0 });
+  assert.equal(serverZero.paidCents, 0);
+  assert.equal(serverZero.unpaidCents, 0);
 });
 
 test('缺少分批字段不猜测；明确次数优先，金额异常不静默补零', () => {
@@ -74,4 +80,14 @@ test('缺少分批字段不猜测；明确次数优先，金额异常不静默�
 test('供应商汇总使用整数分并拒绝超过安全范围', () => {
   assert.equal(groupSuppliers([{ supplier: '甲', plans: [plan(null, 1)] }, { supplier: '甲', plans: [plan(null, 2)] }])[0].amountCents, 3);
   assert.throws(() => groupSuppliers([{ supplier: '甲', plans: [plan(null, Number.MAX_SAFE_INTEGER)] }, { supplier: '甲', plans: [plan(null, 1)] }]), /安全计算范围/);
+});
+
+test('详情优先使用解析后的当前节点，保留专属备注与原申请日期', () => {
+  const detail = supplierRecordDetails({ currentNode: '财务付款', notes: '合并备注不应替代孙立柱备注',
+    raw: { '当前节点': '旧节点', '孙立柱备注': '请确认账期', '2026年11月16日': 0 } });
+  assert.equal(detail.currentNode, '财务付款');
+  assert.equal(detail.remark, '请确认账期');
+  assert.deepEqual(detail.installments, [{ date: '2026-11-16', amountCents: 0 }]);
+  assert.equal(supplierRecordDetails({ currentNode: '', raw: { '当前节点': '办理中' } }).currentNode, '办理中');
+  assert.equal(supplierRecordDetails({ notes: '其他备注' }).remark, '');
 });

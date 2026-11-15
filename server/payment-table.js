@@ -1,15 +1,14 @@
 import { CATEGORIES, LEDGER_CATEGORIES, SLOTS } from '../shared/constants.js';
 
 const forecasts = ['shipment', 'after_sales', 'unregistered'];
-const normal = ['negotiated_normal', 'normal', 'normal_unreconciled'];
+const normal = ['negotiated_normal', 'normal', 'normal_unreconciled', ...forecasts];
 const leaf = (id, parentId, depth) => ({ id, label: CATEGORIES[id], parentId, depth, categories: [id] });
 const rows = [
   { id: 'negotiated_group', label: '谈判付款', parentId: null, depth: 0, categories: ['negotiated'] },
   leaf('negotiated', 'negotiated_group', 1),
   { id: 'normal_group', label: '正常付款', parentId: null, depth: 0, categories: normal },
   leaf('negotiated_normal', 'normal_group', 1), leaf('normal', 'normal_group', 1), leaf('normal_unreconciled', 'normal_group', 1),
-  { id: 'forecast_group', label: '预估合计', parentId: null, depth: 0, categories: forecasts },
-  ...forecasts.map(id => leaf(id, 'forecast_group', 1)),
+  ...forecasts.map(id => leaf(id, 'normal_group', 1)),
   { id: 'total', label: '总合计', parentId: null, depth: 0, categories: Object.keys(CATEGORIES) },
 ];
 const emptyCell = () => ({ paidCents: 0, unpaidCents: 0, totalCents: 0, uncertainCount: 0 });

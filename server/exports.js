@@ -22,9 +22,8 @@ function makeSheet(book, name, columns, rows) {
 }
 export async function dashboardExport(data) {
   const book = new ExcelJS.Workbook(); book.creator = '资金台账';
-  const uploaded = new Set(data.slots.filter(slot => slot.currentVersionId).map(slot => slot.id));
-  const amount = (slotId, cents) => uploaded.has(slotId) ? (cents ?? 0) / 100 : '未上传';
-  const metrics = [['paidCents', '已付'], ['unpaidCents', '未付'], ['totalCents', '合计']];
+  const amount = cents => cents == null ? '待核对' : cents / 100;
+  const metrics = [['totalCents', '合计'], ['paidCents', '已付'], ['unpaidCents', '未付']];
   for (const [name, table, includePeriod] of [
     ['月度付款汇总', data.paymentTable, true], ['时间待定付款汇总', data.pendingPaymentTable, false],
   ]) {
@@ -42,20 +41,22 @@ export async function dashboardExport(data) {
     table.rows.forEach((item, index) => {
       const row = monthly.getRow(index + 2);
       row.getCell(1).alignment = { horizontal: 'left', vertical: 'middle', wrapText: true, indent: item.depth };
-      if (!item.parentId || item.id === 'forecast_group') row.eachCell(cell => {
+      if (!item.parentId) row.eachCell(cell => {
         cell.font = { ...cell.font, bold: true };
         cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: item.id === 'total' ? 'FFFBEADF' : 'FFF3F5F7' } };
       });
     });
   }
-  makeSheet(book, '筛选明细', [
+  const detailColumns = [
     ['类别', 'category'], ['供应商', 'supplier', 34], ['付款主体', 'payer', 24], ['跟单员', 'owner'],
     ['选定期间计划金额', 'plan', 24], ['原台账申请金额', 'amount', 24], ['原台账累计已付', 'paid', 24], ['原台账剩余金额', 'remaining', 24],
     ['计划月份', 'months', 28], ['流程号', 'flowCode', 30], ['流程状态', 'status'], ['申请状态', 'applicationStatus'],
     ['摘要', 'summary', 40], ['备注', 'notes', 60], ['来源文件', 'filename', 45], ['工作表', 'sourceSheet'], ['原始行', 'sourceRow'],
     ['选定范围已付（新规则）', 'selectedPaid', 26], ['选定范围未付（新规则）', 'selectedUnpaid', 26], ['付款判定依据', 'paymentBasis', 70],
     ['批注付款日期', 'paymentDates', 32], ['付款依据版本', 'progressVersion', 60],
-  ], data.records.map(r => ({ ...r, category: CATEGORIES[r.category], plan: r.selectedPlanCents / 100,
+    ['申请判定依据', 'applicationBasis', 55], ['当前节点', 'currentNode', 24],
+  ];
+  const detailRows = records => records.map(r => ({ ...r, category: CATEGORIES[r.category], plan: r.selectedPlanCents / 100,
     amount: r.amountCents / 100, paid: r.paidCents == null ? '未填写' : r.paidCents / 100,
     remaining: r.remainingCents == null ? '未填写' : r.remainingCents / 100,
     selectedPaid: r.selectedPaidCents == null ? '待核对' : r.selectedPaidCents / 100,
@@ -63,24 +64,31 @@ export async function dashboardExport(data) {
     paymentBasis: (r.selectedPlans || r.plans).map(p => `${p.month || '时间待定'}：${p.paymentBasis || '待核对'}${p.paymentEvidence?.length ? '\n' + p.paymentEvidence.map(e => `${e.sourceSheet || r.sourceSheet}!${e.sourceCell || `第${e.sourceRow}行`}（${e.amountCents == null ? '金额待核对' : e.amountCents / 100 + '元'}）：${e.comment || e.status || ''}`).join('\n') : ''}`).join('\n'),
     paymentDates: (r.selectedPlans || r.plans).filter(p => p.paymentDates?.length).map(p => `${p.month || '时间待定'}：${p.paymentDates.join('、')}`).join('\n'),
     progressVersion: [...new Set((r.selectedPlans || r.plans).map(p => p.paymentProgressVersion).filter(Boolean).map(v => `${v.filename}（${v.id}）`))].join('\n'),
-    months: [...new Set((r.selectedPlans || r.plans).map(p => p.month || '时间待定'))].join('、') })));
+    months: [...new Set((r.selectedPlans || r.plans).map(p => p.month || '时间待定'))].join('、') }));
+  makeSheet(book, '筛选明细', detailColumns, detailRows(data.records));
+  makeSheet(book, '时间待定明细', detailColumns, detailRows(data.pendingRecords));
+  makeSheet(book, '已申请未付', [
+    ['供应商', 'supplier', 34], ['分类', 'category', 28], ['已申请未付金额（元）', 'unpaid', 26],
+    ['是否提交申请单', 'applicationStatus', 24], ['付款OA号', 'flowCode', 30], ['节点', 'currentNode', 24],
+    ['申请判定依据', 'applicationBasis', 55], ['来源工作表', 'sourceSheet', 24], ['原始行', 'sourceRow'],
+  ], data.appliedUnpaidRecords.map(record => ({ ...record, category: CATEGORIES[record.category], unpaid: amount(record.selectedUnpaidCents) })));
   makeSheet(book, '统计口径', [['项目', 'name', 26], ['金额或说明', 'value', 90]], [
-    { name: '明确月份付款计划', value: amount('schedule', data.summary.planCents) },
-    { name: '时间待定付款计划', value: amount('schedule', data.summary.pendingPlanCents) },
-    ...['shipment', 'after_sales', 'unregistered'].flatMap(category => [
-      { name: CATEGORIES[category], value: amount(category, data.summary.forecastCents[category]) },
-      { name: `${CATEGORIES[category]}（时间待定）`, value: amount(category, data.summary.pendingForecastCents?.[category]) },
-    ]),
-    { name: '台账累计已付（已知）', value: amount('schedule', data.summary.paidCents) },
-    { name: '台账剩余金额（已知）', value: amount('schedule', data.summary.remainingCents) },
-    { name: '累计金额范围', value: '已付、剩余受供应商、主体、人员和类别筛选影响，不受月份筛选；不按月份分摊部分已付款。' },
+    { name: '期间计划（含预估）', value: amount(data.summary.planCents) },
+    { name: '期间已付', value: amount(data.summary.paidCents) },
+    { name: '期间未付', value: amount(data.summary.remainingCents) },
+    { name: '已申请未付', value: amount(data.summary.appliedUnpaidCents) },
+    { name: '未申请未付', value: amount(data.summary.unappliedUnpaidCents) },
+    { name: '申请金额待核对记录数', value: data.summary.applicationReviewCount },
+    { name: '申请金额待核对涉及未付', value: amount(data.summary.applicationReviewCents) },
+    { name: '付款拆分待核对计划数', value: data.summary.uncertainCount },
+    { name: '统计范围', value: data.summary.scopeLabel },
     { name: '金额空值口径', value: '金额为空或公式没有已保存计算结果时按0计入；不重新计算公式。' },
-    { name: '缺失已付记录数', value: uploaded.has('schedule') ? String(data.summary.missingPaidCount) : '未上传' },
-    { name: '缺失剩余记录数', value: uploaded.has('schedule') ? String(data.summary.missingRemainingCount) : '未上传' },
-    { name: '父子汇总', value: '谈判付款仅含谈判表-谈判付款；正常付款仅含谈判表-正常付款、正常付款-已对账、正常付款-未完成对账。三个预估槽位在平级预估合计下保留，总合计只累加七个原始分类一次，父级和子级不可再次累加。' },
+    { name: '付款拆分未知口径', value: '无法按付款依据拆分已付与未付时保留待核对，不按0计入；原台账金额只在明细中保留，不替代期间统计。' },
+    { name: '父子汇总', value: '谈判付款仅含谈判表-谈判付款；正常付款包含其余六类（谈判表-正常付款、正常付款-已对账、正常付款-未完成对账及三类预估）。总合计只累加七个原始分类一次，父级和子级不可再次累加。' },
+    { name: '已申请未付口径', value: '申请状态明确已提交，或存在有效付款OA号，计为已申请；保留原申请状态及判定依据。仅部分申请且无有效OA号、无对应申请金额时列待核对，不推算已申请金额。已申请与未申请均明确时，两者未付合计等于期间未付。' },
     { name: '正常付款分类与月份', value: '正常付款工作表中预估时间有内容的归为正常付款-未完成对账，按预估时间归月；其余归为正常付款-已对账，按应付时间归月。预估时间无有效年份或日期时单列时间待定，不退回应付时间；是否对账原字段保留供核对，不用于本分类。' },
     { name: '月内已付与未付', value: '谈判付款工作表的两类付款按金额格批注判定：明确的“付款时间（付款节奏跟进）：日期”或“付款时间：日期”直接代表已付，也保留日期及已付/已支付标记的写法；付款日期优先取明确付款时间，申请日期不代表已付。正常付款工作表及三类预估关联当前付款节奏的付款进度整理，只有明确匹配已付款才计已付。未匹配、空状态、未付款、重新申请或匹配冲突均计未付并说明原因；不再按归档状态判断。谈判批注的部分付款或矛盾金额显示待核对。' },
-    { name: '月份与期间合计', value: '月份按来源读取月支付列、应付时间或预估时间，批注付款日期不迁移计划月份，未写年份不推测。月度表及期间合计不含时间待定，时间待定另表展示且不重复列期间合计；月份筛选仅影响月度表。金额以元导出，网页同时显示万元近似值。' },
+    { name: '月份与期间合计', value: '月份按来源读取月支付列、应付时间或预估时间，批注付款日期不迁移计划月份，未写年份不推测。普通期间统计不含时间待定；筛选时间待定时统计仅含待定记录。待定汇总和明细另表保留，不重复计入月度表。金额以元精确导出，网页仅显示万元近似值。' },
   ]);
   makeSheet(book, '待核对', [['问题', 'message', 70], ['来源工作表', 'sourceSheet', 24], ['原始行', 'sourceRow'], ['类型', 'code', 28]], data.issues);
   return book.xlsx.writeBuffer();

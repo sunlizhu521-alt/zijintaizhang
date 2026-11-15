@@ -66,9 +66,10 @@ export function supplierRecordDetails(record) {
   const declaredCount = rawField(raw, ['分几批', '分批次数', '分期次数']);
   const countMatch = declaredCount.normalize('NFKC').trim().match(/^(\d+)\s*(?:批|次|期)?$/);
   const plans = selectedPlans(record);
-  const uncertain = !plans.length || plans.some(plan => plan.paidCents == null || plan.unpaidCents == null);
-  const paidCents = uncertain ? null : sum(plans.map(plan => plan.paidCents));
-  const unpaidCents = uncertain ? null : sum(plans.map(plan => plan.unpaidCents));
+  const unknownPlans = !plans.length || plans.some(plan => plan.paidCents == null || plan.unpaidCents == null);
+  const paidCents = Object.hasOwn(record, 'selectedPaidCents') ? record.selectedPaidCents : unknownPlans ? null : sum(plans.map(plan => plan.paidCents));
+  const unpaidCents = Object.hasOwn(record, 'selectedUnpaidCents') ? record.selectedUnpaidCents : unknownPlans ? null : sum(plans.map(plan => plan.unpaidCents));
+  const uncertain = unknownPlans || paidCents == null || unpaidCents == null;
   const paymentStatus = uncertain ? '待核对' : plans.every(plan => plan.amountCents === 0) ? '金额为0' :
     plans.every(plan => plan.unpaidCents === 0) ? '已支付' : plans.every(plan => plan.paidCents === 0) ? '未支付' : '部分已支付';
   return {
@@ -78,7 +79,7 @@ export function supplierRecordDetails(record) {
     installmentCountSource: countMatch ? 'declared' : installments.length ? 'dated_columns' : null,
     installments,
     applicationStatus: rawField(raw, ['是否提交付款申请单', '是否已申请', '是否申请']) || record.applicationStatus || '',
-    currentNode: rawField(raw, ['当前节点']),
+    currentNode: record.currentNode || rawField(raw, ['当前节点']),
     paymentStatus, paidCents, unpaidCents,
     remark: rawField(raw, ['孙立柱备注']),
   };

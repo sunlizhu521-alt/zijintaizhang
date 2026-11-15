@@ -47,6 +47,38 @@ function seedVersion(db, id, slotId, content, selectedSheets, current = true, pa
     .run(id, '2026-11-01T00:00:00.000Z', '合成上传人', slotId);
 }
 
+test('第6版当前及历史缓存升级后补齐申请别名和节点，不改变原文件及金额', async t => {
+  const db = database(t);
+  const schedule = new ExcelJS.Workbook();
+  await schedule.xlsx.load(await scheduleBuffer());
+  const normal = schedule.getWorksheet('正常付款');
+  normal.getCell('H1').value = '是否已申请';
+  normal.getCell('H2').value = '是';
+  normal.getCell('I1').value = '当前节点';
+  normal.getCell('I2').value = '付款审批';
+  const forecast = new ExcelJS.Workbook();
+  await forecast.xlsx.load(await forecastBuffer());
+  const sheet = forecast.getWorksheet('合成人员');
+  sheet.getCell('H1').value = '是否申请';
+  sheet.getCell('H2').value = '已提交';
+  sheet.getCell('I1').value = '当前节点';
+  sheet.getCell('I2').value = '财务核对';
+  seedVersion(db, 'current-fields', 'schedule', Buffer.from(await schedule.xlsx.writeBuffer()), ['谈判付款', '正常付款'], true, 6);
+  seedVersion(db, 'history-fields', 'shipment', Buffer.from(await forecast.xlsx.writeBuffer()), ['合成人员'], false, 6);
+  const originals = db.prepare('SELECT * FROM file_versions ORDER BY id').all();
+  assert.equal(await refreshParsedVersions(db), 2);
+  assert.deepEqual(db.prepare('SELECT * FROM file_versions ORDER BY id').all(), originals);
+  const active = activeData(db).records.find(record => record.category === 'normal');
+  assert.equal(active.applicationStatus, '是');
+  assert.equal(active.currentNode, '付款审批');
+  assert.equal(active.amountCents, 30000);
+  const history = versionDetails(db, 'shipment', 'history-fields').records[0];
+  assert.equal(history.applicationStatus, '已提交');
+  assert.equal(history.currentNode, '财务核对');
+  assert.equal(history.amountCents, 0);
+  assert.equal(await refreshParsedVersions(db), 0);
+});
+
 test('旧原版与派生缓存升级到当前规则，历史缺进度表仍可恢复且保留原文件、审计及并发控制', async t => {
   const db = database(t);
   const content = await scheduleBuffer();
