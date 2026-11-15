@@ -173,6 +173,12 @@ export function createApp({ db, secureCookies = false, publicOrigin = '', trustP
     audit(db, { ...requestEvent(req), kind: 'security', action: '访问不存在的接口', outcome: 'blocked', status: 404 });
     res.status(404).json({ error: '接口不存在' });
   });
+  const plannerDist = path.join(distDir, 'jihuaguanli');
+  if (existsSync(path.join(plannerDist, 'index.html'))) {
+    app.get(/^\/jihuaguanli$/, (_req, res) => res.redirect(308, '/jihuaguanli/'));
+    app.get(/^\/zijintaizhang\/jihuaguanli\/?$/, (_req, res) => res.redirect(308, '/jihuaguanli/'));
+    app.use('/jihuaguanli', express.static(plannerDist, { index: 'index.html', dotfiles: 'deny', maxAge: 0 }));
+  }
   if (existsSync(path.join(distDir, 'index.html'))) {
     const ordersHtml = readFileSync(path.join(distDir, 'index.html'), 'utf8')
       .replace(/<title>[^<]*<\/title>/, '<title>采购订单跟进</title>')
