@@ -74,7 +74,7 @@ async function afterLogin() {
 }
 function hero() {
   const [en, sub] = intros[page];
-  const daily = ['plan','work','life','learning','mood','worklog','input','exercise'].includes(page);
+  const daily = ['plan','work','life','learning','mood','worklog','input','exercise','book','quote','inspiration'].includes(page);
   return `<header class="hero"><div><div class="eyebrow">${en}</div><h1>${e(label(page))}${page === 'plan' ? ' <span aria-hidden="true">☀</span>' : ''}</h1><p>${page === 'learning' || page === 'mood' ? `${e(longDate(date))} · ` : ''}${sub}</p></div>${daily ? `<div class="date-control"><input type="date" aria-label="查看日期" value="${date}" min="1900-01-01" max="2100-12-31"><button data-action="today">回到今天</button></div>` : `<span class="hero-art">${icon(page === 'quote' ? 'quote' : 'sun')}</span>`}</header>`;
 }
 function stats(values) { return `<div class="stats">${values.map(([name,n,unit,ico]) => `<div class="stat"><div><div class="label">${name}</div><div class="number">${n}<small>${unit}</small></div></div>${icon(ico)}</div>`).join('')}</div>`; }
