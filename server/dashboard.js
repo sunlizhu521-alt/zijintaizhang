@@ -1,5 +1,6 @@
 import { CATEGORIES, LEDGER_CATEGORIES } from '../shared/constants.js';
 import { buildPaymentTable, paymentPlanTotals } from './payment-table.js';
+import { describeReviewIssue } from './review-issues.js';
 
 const MONTH = /^\d{4}-(0[1-9]|1[0-2])$/;
 const ledgerCategories = new Set(LEDGER_CATEGORIES);
@@ -187,21 +188,30 @@ export function buildDashboard(records, issues = [], slots = [], filters = {}) {
     code: 'MISSING_FILE', severity: 'warning', message: `${slot.label}尚未上传有效文件，相关金额未包含该来源。`,
     slotId: slot.id, sourceSheet: '', sourceRow: null,
   });
+  const recordsByKey = new Map(records.map(record => [record.key, record]));
   const uniqueIssues = [...new Map(combinedIssues.map(issue =>
-    [JSON.stringify([issue.code, issue.recordKey, issue.slotId, issue.message]), issue])).values()];
+    [JSON.stringify([issue.code, issue.recordKey, issue.slotId, issue.message]), issue])).values()]
+    .map(issue => describeReviewIssue(issue, recordsByKey));
   const option = field => [...new Set(records.map(record => record[field]).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'zh-CN'));
   const months = [...monthly.values()].sort((a, b) => a.month === 'pending' ? 1 : b.month === 'pending' ? -1 : a.month.localeCompare(b.month));
   const groups = supplierGroups(selectedRecords);
-  const reviewKeys = new Set(uniqueIssues.map(issue => issue.recordKey).filter(Boolean));
+  const issuesByRecord = new Map();
+  for (const issue of uniqueIssues) {
+    if (!issue.recordKey) continue;
+    if (!issuesByRecord.has(issue.recordKey)) issuesByRecord.set(issue.recordKey, []);
+    issuesByRecord.get(issue.recordKey).push(issue);
+  }
   const reviews = new Map();
   for (const record of selectedRecords) {
-    if (!reviewKeys.has(record.key)) continue;
-    if (!reviews.has(record.supplier)) reviews.set(record.supplier, { supplier: record.supplier, totalCents: 0, records: [] });
+    const reviewIssues = issuesByRecord.get(record.key);
+    if (!reviewIssues) continue;
+    if (!reviews.has(record.supplier)) reviews.set(record.supplier, { supplier: record.supplier, totalCents: 0, records: [], reviewIssues: [] });
     const group = reviews.get(record.supplier);
     group.totalCents = add(group.totalCents, record.amountCents);
+    group.reviewIssues.push(...reviewIssues);
     const reviewBalanceMismatch = record.paidCents != null && record.remainingCents != null &&
       BigInt(record.paidCents) + BigInt(record.remainingCents) !== BigInt(record.amountCents);
-    group.records.push({ ...record, reviewBalanceMismatch,
+    group.records.push({ ...record, reviewBalanceMismatch, reviewIssues,
       reviewRemainingCents: record.remainingCents ?? (record.paidCents == null ? null : add(record.amountCents, -record.paidCents)) });
   }
   const updatedAt = slots.filter(slot => slot.currentVersionId).map(slot => Number.isFinite(Date.parse(slot.updatedAt)) ? slot.updatedAt : slot.uploadedAt)

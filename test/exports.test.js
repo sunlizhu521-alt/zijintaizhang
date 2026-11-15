@@ -68,3 +68,23 @@ test('付款明细导出全部期间记录含已付及零值，部分申请和�
   assert.equal(value(sheet, '未知付款供应商', '未申请金额（元）'), '待核对');
   assert.match(value(book.getWorksheet('统计口径'), '付款明细口径', '金额或说明'), /全部记录.*包含已付.*尚未申请且未支付/);
 });
+
+test('待核对导出保留原列及问题，并补具体事项、操作提示和筛选外关联位置', async () => {
+  const records = ['2026-11', '2027-01'].map((month, i) => ({ key: `schedule:正常付款:${i + 2}`, slotId: 'schedule',
+    category: 'normal', supplier: `供应商${i}`, filename: `来源${i}.xlsx`, sourceSheet: '正常付款', sourceRow: i + 2,
+    amountCents: 100, paidCents: 0, remainingCents: 100, flowCode: 'MDST-DGFK20261101001',
+    plans: [{ month, amountCents: 100, paidCents: 0, unpaidCents: 100 }] }));
+  const message = 'N2：金额为空或公式没有已保存的计算结果，已按0保存。';
+  const data = buildDashboard(records, [{ code: 'ZERO_DEFAULTED', recordKey: records[0].key, message }], slots, { month: '2026-11' });
+  const book = new ExcelJS.Workbook();
+  await book.xlsx.load(await dashboardExport(data));
+  const sheet = book.getWorksheet('待核对');
+  assert.deepEqual(sheet.getRow(1).values.slice(1), ['问题', '来源工作表', '原始行', '类型', '核对事项', '需要核对', '来源文件', '关联位置']);
+  assert.equal(value(sheet, message, '来源工作表'), '正常付款');
+  assert.equal(value(sheet, message, '原始行'), 2);
+  assert.equal(value(sheet, message, '核对事项'), '空金额按0处理');
+  assert.match(value(sheet, message, '需要核对'), /确认列出的单元格是否确实为0/);
+  assert.equal(value(sheet, message, '来源文件'), '来源0.xlsx');
+  const duplicateMessage = data.issues.find(issue => issue.code === 'DUPLICATE_FLOW').message;
+  assert.equal(value(sheet, duplicateMessage, '关联位置'), '来源1.xlsx · 正常付款 第3行 · 供应商1');
+});

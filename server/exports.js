@@ -93,7 +93,11 @@ export async function dashboardExport(data) {
     { name: '月内已付与未付', value: '谈判付款工作表的两类付款按金额格批注判定：明确的“付款时间（付款节奏跟进）：日期”或“付款时间：日期”直接代表已付，也保留日期及已付/已支付标记的写法；付款日期优先取明确付款时间，申请日期不代表已付。正常付款工作表及三类预估关联当前付款节奏的付款进度整理，只有明确匹配已付款才计已付。未匹配、空状态、未付款、重新申请或匹配冲突均计未付并说明原因；不再按归档状态判断。谈判批注的部分付款或矛盾金额显示待核对。' },
     { name: '月份与期间合计', value: '月份按来源读取月支付列、应付时间或预估时间，批注付款日期不迁移计划月份，未写年份不推测。普通期间统计不含时间待定；筛选时间待定时统计仅含待定记录。待定汇总和明细另表保留，不重复计入月度表。金额以元精确导出，网页仅显示万元近似值。' },
   ]);
-  makeSheet(book, '待核对', [['问题', 'message', 70], ['来源工作表', 'sourceSheet', 24], ['原始行', 'sourceRow'], ['类型', 'code', 28]], data.issues);
+  makeSheet(book, '待核对', [['问题', 'message', 70], ['来源工作表', 'sourceSheet', 24], ['原始行', 'sourceRow'], ['类型', 'code', 28],
+    ['核对事项', 'title', 32], ['需要核对', 'action', 65], ['来源文件', 'filename', 45], ['关联位置', 'relatedLocationsText', 70]],
+  data.issues.map(issue => ({ ...issue, relatedLocationsText: (issue.relatedLocations ?? []).map(location =>
+    [location.filename, `${location.sourceSheet || ''}${location.sourceRow == null ? '' : ` 第${location.sourceRow}行`}`, location.supplier]
+      .filter(Boolean).join(' · ')).join('\n') })));
   return book.xlsx.writeBuffer();
 }
 export async function logsExport(items) {

@@ -76,9 +76,23 @@ body:has(.funds-shell),body:has(.funds-auth){background:#F4F7FB}
 .brief-scroll-table th:first-child{background:#F5F7FA;z-index:2}
 .brief-scroll-table .cell-secondary{font-size:10px;margin:3px auto 0}
 .brief-scroll-table tfoot th,.brief-scroll-table tfoot td{background:#E6F8FA;font-weight:600}
-.review-records table{min-width:1200px}
+.review-suppliers table{min-width:760px;table-layout:fixed}
+.review-suppliers th:first-child{width:27%}
+.review-suppliers th:nth-child(2){width:38%}
+.review-suppliers th:nth-child(3){width:21%}
+.review-reasons{display:flex;flex-wrap:wrap;gap:6px;justify-content:center}
+.review-reasons .tag{white-space:normal}
+.review-records table{min-width:1920px}
 .review-records th:first-child,.review-records td:first-child{width:200px}
+.review-records th:nth-child(3){width:380px}
+.review-records th:nth-child(4){width:180px}
+.review-records th:nth-child(9){width:200px}
 .review-records th:last-child{width:200px}
+.review-issue-list>div+div{border-top:1px solid #E5EAF0;margin-top:10px;padding-top:10px}
+.review-issue-list strong{color:#826537}
+.review-issue-list p{margin:4px 0 0;white-space:pre-wrap}
+.review-issue-list .review-action{color:#168E9E}
+.review-suppliers+.pagination{margin-top:10px}
 .application-review-note{font-size:11px;margin:9px 0 0;color:#826537}
 .application-review-note button{font-size:11px;min-height:22px;margin-left:5px}
 .ledger-tabs{min-width:0;overflow:auto;gap:22px;flex:none}

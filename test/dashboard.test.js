@@ -201,8 +201,41 @@ test('待核对供应商按当前期间recordKey去重，原台账金额与期�
   assert.equal(data.reviewSuppliers[0].records[0].reviewBalanceMismatch, true);
   assert.equal(data.reviewSuppliers[0].records[1].reviewRemainingCents, 450);
   assert.equal(data.reviewSuppliers[0].records[2].reviewRemainingCents, null);
+  assert.equal(data.reviewSuppliers[0].reviewIssues.length, 4);
+  assert.deepEqual(data.reviewSuppliers[0].records[0].reviewIssues.map(issue => issue.code), ['ONE', 'TWO']);
+  assert.deepEqual(data.reviewSuppliers[0].records[1].reviewIssues.map(issue => issue.code), ['THREE']);
+  assert.ok(!data.reviewSuppliers[0].reviewIssues.some(issue => issue.code === 'FILE_WARNING'));
+  assert.ok(!data.issues.some(issue => issue.code === 'BALANCE_MISMATCH'));
   assert.ok(!data.issues.some(issue => issue.code === 'OUTSIDE'));
   assert.ok(data.issues.some(issue => issue.code === 'FILE_WARNING'));
+});
+
+test('供应商核对事项去重并保留原消息，关联位置可以追溯筛选外记录', () => {
+  const a = record('a10', 'negotiated', [plan('2026-11', 100)],
+    { supplier: '供应商甲', filename: 'V6付款.xlsx', sourceSheet: '谈判付款', sourceRow: 10, flowCode: 'MDST-DGFK20261101001' });
+  const b = record('b14', 'normal', [plan('2027-01', 200)],
+    { supplier: '供应商乙', filename: '另一来源.xlsx', sourceSheet: '正常付款', sourceRow: 14, flowCode: a.flowCode });
+  const zero = { code: 'ZERO_DEFAULTED', recordKey: a.key, slotId: 'schedule', sourceSheet: a.sourceSheet, sourceRow: a.sourceRow,
+    message: 'N10：金额为空或公式没有已保存的计算结果，已按0保存。' };
+  const globalIssue = { code: 'LEGACY_PAYMENT_PROGRESS_MISSING', slotId: 'schedule', filename: '历史.xlsx',
+    sourceSheet: '付款进度整理', sourceRow: 1, message: '历史文件缺少付款进度整理。' };
+  const originalRecords = structuredClone([a, b]);
+  const data = buildDashboard([a, b], [zero, { ...zero }, globalIssue], [], { month: '2026-11', supplier: '供应商甲' });
+  assert.equal(data.records.length, 1);
+  assert.equal(data.summary.planCents, 100);
+  assert.equal(data.reviewSuppliers.length, 1);
+  assert.equal(data.reviewSuppliers[0].totalCents, 100);
+  assert.equal(data.reviewSuppliers[0].reviewIssues.length, 2);
+  assert.equal(data.reviewSuppliers[0].records[0].reviewIssues.length, 2);
+  const displayedZero = data.issues.find(issue => issue.code === zero.code);
+  assert.equal(displayedZero.message, zero.message);
+  assert.equal(displayedZero.filename, 'V6付款.xlsx');
+  assert.equal(displayedZero.title, '空金额按0处理');
+  const duplicate = data.issues.find(issue => issue.code === 'DUPLICATE_FLOW');
+  assert.deepEqual(duplicate.relatedLocations, [{ filename: '另一来源.xlsx', sourceSheet: '正常付款', sourceRow: 14, supplier: '供应商乙' }]);
+  assert.ok(data.issues.some(issue => issue.code === globalIssue.code));
+  assert.ok(data.reviewSuppliers[0].reviewIssues.every(issue => issue.recordKey === a.key));
+  assert.deepEqual([a, b], originalRecords);
 });
 
 test('供应商聚合、Top10及跨年月度趋势均服从同一范围，更新时间取最新来源', () => {

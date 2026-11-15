@@ -100,5 +100,6 @@ export function IssuesTable({ issues = [] }) {
   const [page, setPage] = useState(1);
   useEffect(() => setPage(1), [issues]);
   if (!issues.length) return <p className="muted compact-empty">当前没有待核对事项。</p>;
-  return <><div className="table-wrap"><table aria-label="待核对事项"><thead><tr><th>位置</th><th>说明</th></tr></thead><tbody>{issues.slice((page - 1) * 15, page * 15).map((issue, i) => <tr key={i}><td className="nowrap">{issue.sourceSheet || issue.sheet || '文件状态'}{issue.sourceRow || issue.row ? <span className="cell-secondary">第 {issue.sourceRow || issue.row} 行</span> : null}</td><td>{issue.message || String(issue)}</td></tr>)}</tbody></table></div><Pager page={page} total={issues.length} size={15} onChange={setPage} /></>;
+  const showAction = issues.some(issue => issue.action);
+  return <><div className="table-wrap"><table aria-label="待核对事项"><thead><tr><th>位置</th><th>说明</th>{showAction && <th>需要核对</th>}</tr></thead><tbody>{issues.slice((page - 1) * 15, page * 15).map((issue, i) => <tr key={i}><td className="nowrap">{issue.sourceSheet || issue.sheet || '文件状态'}{issue.sourceRow || issue.row ? <span className="cell-secondary">第 {issue.sourceRow || issue.row} 行</span> : null}</td><td>{issue.message || String(issue)}</td>{showAction && <td>{issue.action || '—'}</td>}</tr>)}</tbody></table></div><Pager page={page} total={issues.length} size={15} onChange={setPage} /></>;
 }
