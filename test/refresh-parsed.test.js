@@ -8,7 +8,7 @@ import { refreshParsedVersions } from '../server/refresh-parsed.js';
 import { parseWorkbook } from '../server/parser.js';
 import { PARSER_VERSION } from '../shared/constants.js';
 
-async function scheduleBuffer() {
+async function scheduleBuffer({ progress = false } = {}) {
   const book = new ExcelJS.Workbook();
   const negotiated = book.addWorksheet('谈判付款');
   negotiated.addRow(['供应商', '付款主体', '摘要', 'OA-申请付款金额', '应付款时间', '已付金额', '剩余付款金额', '2026年11月支付', '是否谈判分批']);
@@ -17,6 +17,7 @@ async function scheduleBuffer() {
   const normal = book.addWorksheet('正常付款');
   normal.addRow(['供应商', '付款主体', '摘要', '本次申请付款金额', '应付时间', '已付金额', '剩余金额']);
   normal.addRow(['合成供应商丙', '合成主体', '正常', 300, '2026-11-01', 0, 300]);
+  if (progress) book.addWorksheet('付款进度整理').addRow(['对公付款OA号', '申请付款金额', '供应商名称', '付款主体', '是否已付款']);
   return Buffer.from(await book.xlsx.writeBuffer());
 }
 
@@ -46,7 +47,7 @@ function seedVersion(db, id, slotId, content, selectedSheets, current = true, pa
     .run(id, '2026-11-01T00:00:00.000Z', '合成上传人', slotId);
 }
 
-test('原始v2与历史派生v2缓存升级到v3，保留原文件并使恢复、审计及并发控制采用新规则', async t => {
+test('旧原版与派生缓存升级到当前规则，历史缺进度表仍可恢复且保留原文件、审计及并发控制', async t => {
   const db = database(t);
   const content = await scheduleBuffer();
   seedVersion(db, 'history', 'schedule', content, ['谈判付款', '正常付款'], false);
@@ -81,6 +82,8 @@ test('原始v2与历史派生v2缓存升级到v3，保留原文件并使恢复�
     if (previous.slot_id === 'schedule') {
       assert.deepEqual(parsed.records.map(record => record.category), ['negotiated', 'negotiated_normal', 'normal']);
       assert.equal(parsed.records[0].paidCents, 0);
+      assert.equal(parsed.paymentProgress.available, false);
+      assert.ok(parsed.issues.some(issue => /付款进度整理/.test(issue.message)));
     } else {
       assert.equal(parsed.records.length, 1);
       assert.equal(parsed.records[0].sourceSheet, '合成人员-原始表');
@@ -144,7 +147,7 @@ test('任一历史文件无法重解析时，所有缓存、槽位和审计保�
 
 test('新上传解析版本无需派生缓存，过期派生缓存不会覆盖当前原版结果', async t => {
   const db = database(t);
-  const content = await scheduleBuffer();
+  const content = await scheduleBuffer({ progress: true });
   const parsed = await parseWorkbook(content, { slotId: 'schedule' });
   seedVersion(db, 'current-parser', 'schedule', content, parsed.selectedSheets);
   db.prepare('UPDATE file_versions SET parsed_json=?,record_count=?,issue_count=? WHERE id=?')
@@ -159,4 +162,31 @@ test('新上传解析版本无需派生缓存，过期派生缓存不会覆盖�
   assert.equal(listVersions(db, 'schedule')[0].recordCount, 3);
   assert.equal(versionDetails(db, 'schedule', 'current-parser').records.length, 3);
   assert.equal(activeData(db).records.length, 3);
+});
+
+test('四个资金槽位均刷新，独立采购订单原文件、缓存、槽位与日志保持不变', async t => {
+  const db = database(t);
+  seedVersion(db, 'schedule-old', 'schedule', await scheduleBuffer(), ['谈判付款', '正常付款'], true, 3);
+  const content = await forecastBuffer();
+  for (const slot of ['shipment', 'after_sales', 'unregistered']) {
+    seedVersion(db, `${slot}-old`, slot, content, ['合成人员'], true, 3);
+  }
+  // An unrelated archive is deliberately not a financial workbook and must never be reparsed here.
+  seedVersion(db, 'orders-old', 'kingdee_orders', Buffer.from('independent order archive'), ['采购订单'], true, 3);
+  const originalArchive = db.prepare("SELECT * FROM file_versions WHERE id='orders-old'").get();
+  const orderSlot = db.prepare("SELECT * FROM file_slots WHERE id='kingdee_orders'").get();
+  db.prepare('INSERT INTO file_parse_cache VALUES (?,?,?,?,?)')
+    .run('orders-old', 3, JSON.stringify({ parserVersion: 3, kind: 'archive', records: [], issues: [] }), 0, 0);
+  const orderCache = db.prepare("SELECT * FROM file_parse_cache WHERE version_id='orders-old'").get();
+
+  assert.equal(await refreshParsedVersions(db), 4);
+  for (const slot of ['schedule', 'shipment', 'after_sales', 'unregistered']) {
+    const cache = db.prepare('SELECT parser_version FROM file_parse_cache WHERE version_id=?').get(`${slot}-old`);
+    assert.equal(cache.parser_version, PARSER_VERSION);
+  }
+  assert.deepEqual(db.prepare("SELECT * FROM file_versions WHERE id='orders-old'").get(), originalArchive);
+  assert.deepEqual(db.prepare("SELECT * FROM file_slots WHERE id='kingdee_orders'").get(), orderSlot);
+  assert.deepEqual(db.prepare("SELECT * FROM file_parse_cache WHERE version_id='orders-old'").get(), orderCache);
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM audit_logs WHERE target='orders-old' OR target='kingdee_orders'").get().n, 0);
+  assert.equal(await refreshParsedVersions(db), 0);
 });

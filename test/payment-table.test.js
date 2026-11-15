@@ -20,12 +20,14 @@ test('父子表仅汇总叶子，正常付款包含两类台账与三类预估�
     record('unregistered', [plan('2026-11', 10)]),
   ], [], slots);
   assert.equal(data.paymentTable.rows.length, 10);
-  assert.deepEqual(data.paymentTable.months, ['2026-11', '2026-12', 'pending']);
+  assert.deepEqual(data.paymentTable.months, ['2026-11', '2026-12']);
+  assert.deepEqual(data.pendingPaymentTable.months, ['pending']);
   assert.deepEqual(rowOf(data, 'forecast_group').cells['2026-11'], { paidCents: 0, unpaidCents: 100, totalCents: 100, uncertainCount: 0 });
   assert.deepEqual(rowOf(data, 'normal_group').cells['2026-11'], { paidCents: 800, unpaidCents: 100, totalCents: 900, uncertainCount: 0 });
   assert.deepEqual(rowOf(data, 'total').cells['2026-11'], { paidCents: 1200, unpaidCents: 700, totalCents: 1900, uncertainCount: 0 });
   assert.deepEqual(rowOf(data, 'total').period, { paidCents: 1200, unpaidCents: 900, totalCents: 2100, uncertainCount: 0 });
-  assert.equal(rowOf(data, 'total').cells.pending.totalCents, 90);
+  assert.equal(rowOf(data, 'total').cells.pending, undefined);
+  assert.equal(data.pendingPaymentTable.rows.find(row => row.id === 'total').cells.pending.totalCents, 90);
   assert.equal(rowOf(data, 'shipment').parentId, 'forecast_group');
   assert.equal(rowOf(data, 'forecast_group').parentId, 'normal_group');
 });
@@ -43,7 +45,30 @@ test('月份与类别筛选同步影响父子表、期间值和明细，无效�
   assert.equal(data.records.length, 1);
   const pending = buildDashboard([record('normal', [plan(null, 20, 20), plan('2026-11', 30)])], [], slots, { month: 'pending' });
   assert.equal(rowOf(pending, 'total').period.totalCents, 0);
-  assert.equal(rowOf(pending, 'total').cells.pending.paidCents, 20);
+  assert.deepEqual(pending.paymentTable.months, []);
+  assert.equal(pending.pendingPaymentTable.rows.find(row => row.id === 'total').cells.pending.paidCents, 20);
+});
+
+test('待定表独立于月份范围，跨年、自选月份、类别和其他筛选均保持对应范围', () => {
+  const records = [record('normal', [plan(null, 50, 20), plan('2026-12', 100), plan('2027-01', 200, 200)]),
+    record('shipment', [plan(null, 0), plan('2026-11', 70)])];
+  for (const filters of [{ from: '2027-01', to: '2027-01' }, { month: '2027-01' }]) {
+    const data = buildDashboard(records, [], slots, filters);
+    assert.deepEqual(data.paymentTable.months, ['2027-01']);
+    assert.equal(rowOf(data, 'total').period.totalCents, 200);
+    assert.deepEqual(data.pendingPaymentTable.rows.find(row => row.id === 'total').cells.pending,
+      { paidCents: 20, unpaidCents: 30, totalCents: 50, uncertainCount: 0 });
+  }
+  const pendingZero = buildDashboard(records, [], slots, { category: 'shipment', from: '2028-01' });
+  assert.equal(pendingZero.paymentTable.hasRecords, false);
+  assert.equal(pendingZero.pendingPaymentTable.hasRecords, true);
+  assert.equal(pendingZero.pendingPaymentTable.rows.find(row => row.id === 'total').cells.pending.totalCents, 0);
+  for (const filters of [{ supplier: '无匹配' }, { payer: '无匹配' }, { owner: '无匹配' }]) {
+    const empty = buildDashboard(records, [], slots, filters);
+    assert.equal(empty.paymentTable.hasRecords, false);
+    assert.equal(empty.pendingPaymentTable.hasRecords, false);
+  }
+  assert.equal(buildDashboard([record('normal', [plan('2026-12', 0)])], [], slots).pendingPaymentTable.hasRecords, false);
 });
 
 test('不明确的月内已付只影响相关月份和父项，不把未知当零；负金额与安全边界保留', () => {

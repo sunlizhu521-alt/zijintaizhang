@@ -38,7 +38,23 @@ export function RecordDetail({ record, onClose }) {
         ['来源文件', record.filename], ['工作表 / 行号', `${record.sourceSheet} · 第 ${record.sourceRow} 行`], ['备注', record.notes],
       ].map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value == null || value === '' ? '—' : String(value)}</dd></div>)}
     </dl>
-    <h3>付款计划与判定依据</h3><div className="table-wrap"><table aria-label="记录付款计划与依据"><thead><tr><th>月份</th><th className="numeric">计划金额（元）</th><th className="numeric">计划已付（元）</th><th className="numeric">计划未付（元）</th><th>判定依据</th></tr></thead><tbody>{(record.selectedPlans || record.plans)?.map((plan, i) => <tr key={i}><td className="nowrap">{monthText(plan.month)}</td><td className="numeric">{money(plan.amountCents)}</td><td className="numeric">{plan.paidCents == null ? '待核对' : money(plan.paidCents)}</td><td className="numeric">{plan.unpaidCents == null ? '待核对' : money(plan.unpaidCents)}</td><td className="payment-evidence">{plan.paymentBasis || '未提供'}{plan.paymentEvidence?.map((evidence, index) => <div key={index}><strong>{evidence.sourceCell}{evidence.amountCents == null ? '' : ` · ${money(evidence.amountCents)} 元`}</strong>{evidence.comment && <span>{evidence.comment}</span>}</div>)}</td></tr>)}</tbody></table></div>
+    <h3>付款计划与判定依据</h3><div className="table-wrap"><table aria-label="记录付款计划与依据">
+      <thead><tr><th>计划月份</th><th className="numeric">计划金额（元）</th><th className="numeric">计划已付（元）</th><th className="numeric">计划未付（元）</th><th>付款时间</th><th>判定依据</th></tr></thead>
+      <tbody>{(record.selectedPlans || record.plans)?.map((plan, i) => <tr key={i}>
+        <td className="nowrap">{monthText(plan.month)}</td><td className="numeric">{money(plan.amountCents)}</td>
+        <td className="numeric">{plan.paidCents == null ? '待核对' : money(plan.paidCents)}</td><td className="numeric">{plan.unpaidCents == null ? '待核对' : money(plan.unpaidCents)}</td>
+        <td className="nowrap">{plan.paymentDates?.length ? plan.paymentDates.join('、') : '未提供'}</td>
+        <td className="payment-evidence">{plan.paymentBasis || '未提供'}
+          {plan.paymentProgressVersion && <span>付款依据版本：{plan.paymentProgressVersion.filename} · {plan.paymentProgressVersion.id?.slice(0, 8)}</span>}
+          {plan.paymentEvidence?.map((evidence, index) => <div key={index}>
+            <strong>{evidence.sourceSheet}{evidence.sourceRow ? ` · 第 ${evidence.sourceRow} 行` : ''}{evidence.sourceCell}{evidence.amountCents == null ? '' : ` · ${money(evidence.amountCents)} 元`}</strong>
+            {evidence.status != null && <span>是否已付款：{evidence.status || '空白'}</span>}
+            {evidence.flowCode && <span>流程号：{evidence.flowCode}</span>}
+            {evidence.comment && <span>{evidence.comment}</span>}
+          </div>)}
+        </td>
+      </tr>)}</tbody>
+    </table></div>
     {record.raw && <details className="raw-details"><summary>查看原始字段</summary><dl className="detail-grid">{Object.entries(record.raw).map(([key, value]) => <div key={key}><dt>{key}</dt><dd>{typeof value === 'object' && value !== null ? JSON.stringify(value) : String(value ?? '')}</dd></div>)}</dl></details>}
     {record.comments && Object.keys(record.comments).length > 0 && <details className="raw-details"><summary>查看单元格批注（{Object.keys(record.comments).length}）</summary><dl className="detail-grid">{Object.entries(record.comments).map(([cell, comment]) => <div key={cell}><dt>{cell}</dt><dd>{String(comment)}</dd></div>)}</dl></details>}
   </Modal>;

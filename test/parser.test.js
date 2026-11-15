@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import ExcelJS from 'exceljs';
 import { inspectWorkbook, parseWorkbook, parseDate, parseMoney } from '../server/parser.js';
+import { PARSER_VERSION } from '../shared/constants.js';
 
 const forecastHeaders = ['预估付款月份', '供应商名称', '付款主体', '摘要', '申请付款金额', '账期', '备注'];
 const negotiatedHeaders = ['创跟单员', '供应商', '付款主体', '对公付款0A流程号', '摘要', 'OA-申请付款金额', '应付款时间', '已付金额', '剩余付款金额', '是否结清', '流程状态', '2026年11月支付', '2026年12月支付', '备注', '是否谈判分批'];
@@ -23,7 +24,10 @@ function scheduleBook() {
   const normal = workbook.addWorksheet('正常付款');
   normal.addRow(normalHeaders);
   normal.addRow(['乙', '样例供应商乙', '示例主体', 'MDST-DGFK20261101002', '正常款', '1,000.00', '2026年11月15日', null, 1000, '', '归档']);
-  return { workbook, negotiated, normal };
+  const progress = workbook.addWorksheet('付款进度整理');
+  progress.addRow(['对公付款OA号', '申请付款金额', '供应商名称', '付款主体', '是否已付款']);
+  progress.addRow(['MDST-DGFK20261101002', 1000, '样例供应商乙', '示例主体', '已付款']);
+  return { workbook, negotiated, normal, progress };
 }
 
 test('金额转换保留空与零，精确舍入分并拒绝非法或超界数值', () => {
@@ -48,7 +52,7 @@ test('日期支持 Excel 序号、1904 系统、文本、时间戳和跨年，�
   for (const invalid of ['11月', '/', '2026-02-30', '2026年13月', null]) assert.equal(parseDate(invalid), null);
 });
 
-test('付款节奏保留原台账空已付为零，新增月度已付按归档规则识别', async () => {
+test('付款节奏保留原台账空已付为零，正常付款按进度表识别且不增加记录', async () => {
   const { workbook, negotiated } = scheduleBook();
   negotiated.getCell('N2').note = '11月核对备注';
   const parsed = await parseWorkbook(await asBuffer(workbook), { slotId: 'schedule' });
@@ -63,7 +67,8 @@ test('付款节奏保留原台账空已付为零，新增月度已付按归档�
   assert.equal(parsed.records[1].plans[0].paidCents, 100000);
   assert.equal(parsed.records[1].plans[0].unpaidCents, 0);
   assert.ok(!parsed.issues.some(issue => issue.code === 'MISSING_PAID'));
-  assert.ok(parsed.issues.some(issue => issue.code === 'STATUS_CONFLICT'));
+  assert.equal(parsed.paymentProgress.rows.length, 1);
+  assert.deepEqual(parsed.selectedSheets, ['谈判付款', '正常付款', '付款进度整理']);
 });
 
 test('分期日期格的批注识别已付，备注格不计入，缺缓存分期金额按零保存并保留来源', async () => {
@@ -76,7 +81,7 @@ test('分期日期格的批注识别已付，备注格不计入，缺缓存分�
   negotiated.getCell('N2').note = '11月5日-已付';
   negotiated.getCell('K2').value = '归档';
   const parsed = await parseWorkbook(await asBuffer(workbook), { slotId: 'schedule' });
-  assert.equal(parsed.parserVersion, 3);
+  assert.equal(parsed.parserVersion, PARSER_VERSION);
   const record = parsed.records[0];
   assert.deepEqual(record.plans.map(p => [p.month, p.amountCents, p.paidCents, p.unpaidCents]), [['2026-11', 50000, 20000, 30000], ['2026-12', 73456, 0, 73456]]);
   assert.equal(record.plans[0].paymentEvidence[0].sourceCell, 'P2');
@@ -87,7 +92,7 @@ test('分期日期格的批注识别已付，备注格不计入，缺缓存分�
   assert.equal(empty.records[0].plans[0].paidCents, 0);
   assert.equal(empty.records[0].plans[0].unpaidCents, 50000);
   assert.ok(empty.issues.some(issue => issue.code === 'ZERO_DEFAULTED' && issue.message.includes('P2')));
-  assert.equal(empty.records[1].plans[0].paidCents, 0);
+  assert.equal(empty.records[1].plans[0].paidCents, 100000);
 });
 
 test('预估默认排除原始和隐藏表，保留重复备注列，支持显式选表', async () => {
@@ -227,6 +232,51 @@ test('同流程号多笔记录保留并提示核对', async () => {
   const parsed = await parseWorkbook(await asBuffer(workbook), { slotId: 'schedule' });
   assert.equal(parsed.records.length, 2);
   assert.equal(parsed.issues.filter(issue => issue.code === 'DUPLICATE_FLOW').length, 2);
+});
+
+test('谈判表的非分批付款也读取分期批注，付款日期跨年仍归原计划月', async () => {
+  const { workbook, negotiated, progress } = scheduleBook();
+  negotiated.getCell('O2').value = '否';
+  negotiated.getCell('K2').value = '已归档';
+  negotiated.getCell('P1').value = '2026年11月2日';
+  negotiated.getCell('P2').value = 200;
+  negotiated.getCell('P2').note = '2027年1月5日-已支付\n申请日期：2026年11月2日';
+  progress.addRow(['MDST-DGFK20261101001', 1234.56, '样例供应商甲', '示例主体', '已付款']);
+  const { records } = await parseWorkbook(await asBuffer(workbook), { slotId: 'schedule' });
+  assert.equal(records[0].category, 'negotiated_normal');
+  assert.deepEqual(records[0].plans.map(p => [p.month, p.paidCents, p.unpaidCents]), [['2026-11', 20000, 30000], ['2026-12', 0, 73456]]);
+  assert.deepEqual(records[0].plans[0].paymentDates, ['2027-01-05']);
+});
+
+test('付款进度表缺失或缺必需字段拒绝新文件，历史保留并提示未关联', async () => {
+  const { workbook, progress } = scheduleBook();
+  for (const column of ['A1', 'B1', 'C1', 'D1', 'E1']) {
+    const header = progress.getCell(column).value;
+    progress.getCell(column).value = null;
+    const buffer = await asBuffer(workbook);
+    await assert.rejects(parseWorkbook(buffer, { slotId: 'schedule' }), /付款进度整理.*缺少必需字段/);
+    const legacy = await parseWorkbook(buffer, { slotId: 'schedule', allowLegacyProgress: true });
+    assert.equal(legacy.paymentProgress.available, false);
+    assert.equal(legacy.records[1].plans[0].paidCents, 0);
+    assert.ok(legacy.issues.some(issue => issue.code === 'LEGACY_PAYMENT_PROGRESS_MISSING'));
+    progress.getCell(column).value = header;
+  }
+  workbook.removeWorksheet(progress.id);
+  await assert.rejects(parseWorkbook(await asBuffer(workbook), { slotId: 'schedule' }), /缺少必需工作表“付款进度整理”/);
+  assert.equal((await parseWorkbook(await asBuffer(workbook), { slotId: 'schedule', allowLegacyProgress: true })).records.length, 2);
+});
+
+test('进度金额错误定位到行列，空或无缓存金额为零，进度行不增加业务金额', async () => {
+  const { workbook, progress } = scheduleBook();
+  progress.getCell('B2').value = '金额错误';
+  await assert.rejects(parseWorkbook(await asBuffer(workbook), { slotId: 'schedule' }), error => error.status === 422 && error.issues.some(issue => issue.sourceSheet === '付款进度整理' && issue.sourceRow === 2 && issue.message.includes('B2')));
+  for (const value of [null, { formula: '1+2' }, 0]) {
+    progress.getCell('B2').value = value;
+    const parsed = await parseWorkbook(await asBuffer(workbook), { slotId: 'schedule' });
+    assert.equal(parsed.paymentProgress.rows[0].amountCents, 0);
+    assert.equal(parsed.records.length, 2);
+    assert.equal(parsed.records.reduce((sum, record) => sum + record.amountCents, 0), 223456);
+  }
 });
 
 test('实际付款样表基准：谈判表56条分批、70条非分批，正常表41条，总记录和计划金额保持', { skip: !process.env.SCHEDULE_SAMPLE }, async () => {

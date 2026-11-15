@@ -14,7 +14,7 @@ function detailRecords(records, selection) {
   });
 }
 
-export default function PaymentTable({ table, records = [] }) {
+export default function PaymentTable({ table, records = [], pending = false }) {
   const [expanded, setExpanded] = useState(new Set());
   const [selection, setSelection] = useState(null);
   useEffect(() => { setSelection(null); }, [records]);
@@ -30,7 +30,9 @@ export default function PaymentTable({ table, records = [] }) {
     }
     return true;
   });
-  const columns = [...months, 'period'];
+  const title = pending ? '时间待定付款汇总' : '月度付款汇总';
+  const hasRecords = table?.hasRecords ?? months.length > 0;
+  const columns = pending ? months : [...months, 'period'];
   const monthLabel = month => month === 'period' ? '所选期间合计' : monthText(month);
   function toggle(id) {
     setExpanded(previous => {
@@ -39,12 +41,12 @@ export default function PaymentTable({ table, records = [] }) {
       return next;
     });
   }
-  return <section className="panel payment-panel">
-    <div className="section-heading"><div><h2>月度付款汇总</h2><p>展开分类查看明细，点击金额查看付款依据。时间待定单列，不计入期间合计。</p></div>
-      {months.length > 0 && <button onClick={() => setExpanded(expanded.size ? new Set() : new Set(parents))}>{expanded.size ? '全部收起' : '全部展开'}</button>}
+  return <section className="panel payment-panel" aria-label={title}>
+    <div className="section-heading"><div><h2>{title}</h2><p>{pending ? '未明确计划月份的记录单独汇总，不受月份范围筛选影响。' : '仅汇总明确计划月份的记录，点击金额查看付款依据。'}</p></div>
+      {hasRecords && <button aria-label={`${title} ${expanded.size ? '全部收起' : '全部展开'}`} onClick={() => setExpanded(expanded.size ? new Set() : new Set(parents))}>{expanded.size ? '全部收起' : '全部展开'}</button>}
     </div>
-    {!months.length ? <Empty title="当前区间暂无计划">可调整月份筛选，或在文件管理中上传数据。</Empty> : <div className="table-wrap payment-table-wrap" tabIndex={0} role="region" aria-label="可横向滚动的月度付款汇总">
-      <table className="payment-table" aria-label="月度付款父子汇总表">
+    {!hasRecords ? <Empty title={pending ? '暂无时间待定记录' : '当前区间暂无计划'}>{pending ? '当前筛选条件下，没有未明确计划月份的记录。' : '可调整月份筛选，或在文件管理中上传数据。'}</Empty> : <div className="table-wrap payment-table-wrap" tabIndex={0} role="region" aria-label={`可横向滚动的${title}`}>
+      <table className="payment-table" aria-label={pending ? '时间待定付款父子汇总表' : '月度付款父子汇总表'}>
         <thead>
           <tr><th className="payment-category" rowSpan={2} scope="col">分类</th>{columns.map(month => <th className={`payment-month-group ${month === 'period' ? 'payment-period' : ''}`} colSpan={3} scope="colgroup" key={month}>{monthLabel(month)}</th>)}</tr>
           <tr>{columns.flatMap(month => measures.map(([key, label]) => <th className={`numeric payment-${key} ${key === 'paidCents' ? 'payment-group-start' : ''} ${month === 'period' ? 'payment-period' : ''}`} scope="col" key={`${month}-${key}`}>{key === 'totalCents' && month !== 'period' && month !== 'pending' ? '本月合计' : label}</th>))}</tr>

@@ -2,12 +2,17 @@ import ExcelJS from 'exceljs';
 import yauzl from 'yauzl';
 import { ALL_SLOTS, MAX_UPLOAD_BYTES, ORDER_SLOT, PARSER_VERSION } from '../shared/constants.js';
 import { findDuplicateIssues } from './dashboard.js';
-import { classifyPlanPayments, commentPaymentState, isArchived } from './payment-status.js';
+import { classifyPlanPayments, commentPaymentState } from './payment-status.js';
+import { resolveProgressPayments } from './payment-progress.js';
 
 const MAX_EXPANDED_BYTES = 200 * 1024 * 1024;
 const MAX_RECORDS = 100000;
 const SLOT_IDS = new Set(ALL_SLOTS.map(slot => slot.id));
 const normalize = value => String(value ?? '').normalize('NFKC').replace(/\s+/g, '').trim();
+const progressFields = {
+  flowCode: ['对公付款OA号', '对公付款OA流程号', '对公付款0A流程号', '流程编号'],
+  amountCents: ['申请付款金额'], supplier: ['供应商名称', '供应商'], payer: ['付款主体'], status: ['是否已付款'],
+};
 
 function invalid(message, issues = []) {
   return Object.assign(new Error(message), { status: 422, issues });
@@ -176,16 +181,18 @@ function sheetMetadata(workbook, slotId) {
     const { headers, rowNumber } = headersOf(sheet);
     const supplier = columnOf(headers, ['供应商', '供应商名称']);
     const isSchedule = slotId === 'schedule';
+    const isProgress = isSchedule && sheet.name === '付款进度整理';
     const expected = isSchedule && ['谈判付款', '正常付款'].includes(sheet.name);
     const forecast = ['预估付款月份', '供应商名称', '付款主体', '摘要', '申请付款金额', '账期', '备注'].every(label => columnOf(headers, [label]));
-    const eligible = isSchedule ? expected && !!supplier : forecast;
+    const eligible = isSchedule ? (expected && !!supplier) || (isProgress && Object.values(progressFields).every(names => columnOf(headers, names))) : forecast;
     const backup = /原始|备份|汇总|合计/.test(sheet.name);
     let count = 0;
     if (supplier) sheet.eachRow({ includeEmpty: false }, (row, number) => {
       if (number > rowNumber && textOf(row.getCell(supplier)) && !/^(合计|总计|小计|汇总)$/.test(textOf(row.getCell(supplier)))) count++;
     });
     return { name: sheet.name, eligible, defaultSelected: eligible && (isSchedule || (!backup && sheet.state === 'visible')),
-      reason: !eligible ? (isSchedule ? '不属于付款节奏的指定工作表，或缺少表头。' : '缺少预估模板必需表头。') : backup ? '原始、备份或汇总工作表，默认不计入。' : sheet.state !== 'visible' ? '隐藏工作表，默认不计入。' : '', recordCount: count };
+      reason: !eligible ? (isSchedule ? '不属于付款节奏的指定工作表，或缺少表头。' : '缺少预估模板必需表头。') : isProgress ? '仅提供付款状态依据，不增加业务记录或汇总金额。' : backup ? '原始、备份或汇总工作表，默认不计入。' : sheet.state !== 'visible' ? '隐藏工作表，默认不计入。' : '', recordCount: isProgress ? 0 : count,
+      ...(isProgress ? { kind: 'reference', referenceCount: count } : {}) };
   });
 }
 
@@ -199,7 +206,41 @@ function noteOf(cell) {
   return cell.note?.texts?.map(part => part.text ?? '').join('') ?? '';
 }
 
-export async function parseWorkbook(buffer, { slotId, selectedSheets } = {}) {
+function readPaymentProgress(workbook, allowLegacyProgress, issues) {
+  const sheet = workbook.getWorksheet('付款进度整理');
+  const { headers, rowNumber } = sheet ? headersOf(sheet) : { headers: [], rowNumber: 1 };
+  const columns = Object.fromEntries(Object.entries(progressFields).map(([key, names]) => [key, columnOf(headers, names)]));
+  const missing = Object.keys(columns).filter(key => !columns[key]).map(key => progressFields[key][0]);
+  const unavailable = (message, details = []) => {
+    if (!allowLegacyProgress) throw invalid(message, details.length ? details : [{ code: 'INVALID_PAYMENT_PROGRESS', sourceSheet: '付款进度整理', sourceRow: rowNumber, message }]);
+    issues.push({ code: 'LEGACY_PAYMENT_PROGRESS_MISSING', severity: 'warning', sourceSheet: '付款进度整理', sourceRow: rowNumber,
+      slotId: 'schedule', message: `历史文件：${message}无法关联的付款计未付，请核对。` });
+    return { available: false, rows: [], issue: message };
+  };
+  if (!sheet) return unavailable('缺少必需工作表“付款进度整理”。');
+  if (missing.length) return unavailable(`“付款进度整理”缺少必需字段：${missing.join('、')}。`);
+  const rows = [], errors = [];
+  sheet.eachRow({ includeEmpty: false }, (row, number) => {
+    if (number <= rowNumber) return;
+    const supplier = textOf(row.getCell(columns.supplier));
+    if (/^(合计|总计|小计|汇总)$/.test(supplier)) return;
+    if (!Object.values(columns).some(column => textOf(row.getCell(column)))) return;
+    const cell = row.getCell(columns.amountCents);
+    let amountCents;
+    try { amountCents = parseMoney(valueOf(cell)) ?? 0; }
+    catch (cause) {
+      errors.push({ code: 'INVALID_PAYMENT_PROGRESS', sourceSheet: sheet.name, sourceRow: number, message: `${cell.address}：${cause.message}` });
+      return;
+    }
+    rows.push({ sourceSheet: sheet.name, sourceRow: number, supplier, amountCents,
+      flowCode: textOf(row.getCell(columns.flowCode)), payer: textOf(row.getCell(columns.payer)), status: textOf(row.getCell(columns.status)) });
+    if (rows.length > MAX_RECORDS) throw invalid('付款进度整理超过 100,000 条，请精简后上传。');
+  });
+  if (errors.length) return unavailable(`“付款进度整理”存在 ${errors.length} 处金额错误，未替换当前文件。`, errors);
+  return { available: true, rows };
+}
+
+export async function parseWorkbook(buffer, { slotId, selectedSheets, allowLegacyProgress = false } = {}) {
   const workbook = await loadWorkbook(buffer, slotId);
   const sheets = sheetMetadata(workbook, slotId);
   if (selectedSheets !== undefined && (!Array.isArray(selectedSheets) || selectedSheets.some(name => typeof name !== 'string'))) throw invalid('工作表选择格式不正确。');
@@ -216,6 +257,7 @@ export async function parseWorkbook(buffer, { slotId, selectedSheets } = {}) {
     if (!metadata?.eligible) throw invalid(`工作表“${name}”不存在或缺少必需表头。`, [{ code: 'INVALID_SHEET', sourceSheet: name, sourceRow: 1, message: '工作表不存在或缺少必需表头。' }]);
   }
   const records = [], issues = [], errors = [];
+  const paymentProgress = slotId === 'schedule' ? readPaymentProgress(workbook, allowLegacyProgress, issues) : undefined;
   for (const sheetName of selected) {
     const sheet = workbook.getWorksheet(sheetName);
     const { headers, rowNumber } = headersOf(sheet);
@@ -319,7 +361,7 @@ export async function parseWorkbook(buffer, { slotId, selectedSheets } = {}) {
       const settled = getText(['是否结清']);
       const status = getText(['流程状态']);
       const installments = [];
-      if (category === 'negotiated') {
+      if (sourceCategory === 'negotiated') {
         for (const header of headers) {
           if (!/^(?:\d{4}年)?\d{1,2}月\d{1,2}日$/.test(header.name)) continue;
           const cell = row.getCell(header.column);
@@ -331,20 +373,20 @@ export async function parseWorkbook(buffer, { slotId, selectedSheets } = {}) {
           installments.push({ month: parseDate(header.name)?.month ?? null, amountCents: value, sourceCell: cell.address, comment, state });
         }
       }
-      classifyPlanPayments({ category, status, plans, installments, warn });
+      classifyPlanPayments({ category, plans, installments, warn });
       const payer = textOf(row.getCell(payerCol));
       if (!payer) warn('MISSING_PAYER', '付款主体为空，请核对原表。');
       if (slotId === 'schedule') {
         if (paidCents !== null && remainingCents !== null && BigInt(paidCents) + BigInt(remainingCents) !== BigInt(amountCents)) warn('BALANCE_MISMATCH', '已付金额加剩余金额与申请金额不一致，请核对原表。');
-        if ((settled === '是' && remainingCents !== null && remainingCents !== 0) || (category !== 'negotiated' && isArchived(status) && remainingCents !== null && remainingCents > 0)) warn('STATUS_CONFLICT', '结清或流程状态与原台账剩余金额存在矛盾；原台账已付和剩余值保留，新表已付按已确认的付款规则识别。');
-        if (paidCents !== null && plans.every(plan => plan.paidCents !== null) && plans.reduce((sum, plan) => sum + BigInt(plan.paidCents), 0n) !== BigInt(paidCents)) warn('RULE_PAID_MISMATCH', '按批注或归档规则识别的已付合计与原台账已付不同；原台账金额保留供核对，未用于推算各月付款。');
+        if (settled === '是' && remainingCents !== null && remainingCents !== 0) warn('STATUS_CONFLICT', '结清标记与原台账剩余金额存在矛盾；原台账已付和剩余值保留供核对。');
+        if (sourceCategory === 'negotiated' && paidCents !== null && plans.every(plan => plan.paidCents !== null) && plans.reduce((sum, plan) => sum + BigInt(plan.paidCents), 0n) !== BigInt(paidCents)) warn('RULE_PAID_MISMATCH', '按批注识别的已付合计与原台账已付不同；原台账金额保留供核对，未用于推算各月付款。');
       }
       if (zeroedCells.length) warn('ZERO_DEFAULTED', `${zeroedCells.join('、')}：金额为空或公式没有已保存的计算结果，已按0保存。`);
       if ([amountCents, paidCents, remainingCents, ...plans.map(plan => plan.amountCents)].some(value => value !== null && value < 0)) warn('NEGATIVE_AMOUNT', '记录含负金额，已按原值保留，请确认是否为退款或冲减。');
       records.push({ key, slotId, sourceSheet: sheetName, sourceRow: number, category,
         owner: getText(['跟单员', '创跟单员']) || (slotId === 'schedule' ? '' : sheetName),
         supplier, payer, summary: textOf(row.getCell(summaryCol)),
-        flowCode: getText(['对公付款OA流程号', '对公付款0A流程号', '流程编号']) || (slotId !== 'schedule' ? notes.join('\n').match(/MDST-DGFK\d+/)?.[0] ?? '' : ''),
+        flowCode: getText(['对公付款OA号', '对公付款OA流程号', '对公付款0A流程号', '流程编号']) || (slotId !== 'schedule' ? notes.join('\n').match(/MDST-DGFK\d+/)?.[0] ?? '' : ''),
         amountCents, paidCents, remainingCents, status, settled,
         applicationStatus: getText(['是否提交付款申请单']), dueDate: date?.date ?? null,
         notes: notes.join('\n'), plans, raw, comments,
@@ -355,5 +397,8 @@ export async function parseWorkbook(buffer, { slotId, selectedSheets } = {}) {
   if (errors.length) throw invalid(`发现 ${errors.length} 处数据错误，未替换当前文件。`, errors);
   if (!records.length) throw invalid('所选工作表没有有效业务记录，未替换当前文件。');
   issues.push(...findDuplicateIssues(records));
-  return { parserVersion: PARSER_VERSION, records, issues, selectedSheets: selected, sheets };
+  return { parserVersion: PARSER_VERSION,
+    records: paymentProgress ? resolveProgressPayments(records, paymentProgress).records : records,
+    issues, selectedSheets: paymentProgress && workbook.getWorksheet('付款进度整理') ? [...selected, '付款进度整理'] : selected,
+    sheets, ...(paymentProgress ? { paymentProgress } : {}) };
 }

@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { classifyPlanPayments, commentPaymentState, isArchived } from '../server/payment-status.js';
+import { classifyPlanPayments, commentPaymentState, commentPaymentDates } from '../server/payment-status.js';
+import { resolveProgressPayments } from '../server/payment-progress.js';
 
 function classify(category, plans, extra = {}) {
   const issues = [];
@@ -17,21 +18,16 @@ test('批注仅识别日期加明确已付，支持核实和已支付，负向�
   for (const note of ['11月5日-预计已付', '11月5日-已付部分', '11月5日-已付\n11月6日-未付', '11月5日-已付？', '已付', '2月30日-已付', '11月5日-已付50元']) assert.equal(commentPaymentState(note), 'uncertain', note);
 });
 
-test('两类正常付款精确按归档识别，三类预估即使写归档也计未付', () => {
-  for (const category of ['normal', 'negotiated_normal']) {
-    for (const status of ['归档', ' 已归档 ']) {
-      const result = classify(category, [plan()], { status });
-      assert.equal(result.plans[0].paidCents, 10000);
-      assert.equal(result.plans[0].unpaidCents, 0);
-    }
-    for (const status of ['', '未归档', '未已归档', '归档中', '归档抄送']) assert.equal(classify(category, [plan()], { status }).plans[0].paidCents, 0);
+test('两类谈判付款均读取批注，正常与预估不因归档状态认定已付', () => {
+  for (const category of ['negotiated', 'negotiated_normal']) {
+    assert.equal(classify(category, [plan()], { status: '已归档' }).plans[0].paidCents, 0);
+    assert.equal(classify(category, [plan()], { installments: [item(4000, '11月5日-已付')] }).plans[0].paidCents, 4000);
   }
-  for (const category of ['shipment', 'after_sales', 'unregistered']) {
+  for (const category of ['normal', 'shipment', 'after_sales', 'unregistered']) {
     const result = classify(category, [plan()], { status: '归档' });
     assert.equal(result.plans[0].paidCents, 0);
     assert.equal(result.plans[0].unpaidCents, 10000);
   }
-  assert.equal(isArchived('未归档'), false);
 });
 
 test('谈判付款按具体分期金额拆已付未付，批注跨月不迁移月份，重复标记不翻倍', () => {
@@ -39,6 +35,7 @@ test('谈判付款按具体分期金额拆已付未付，批注跨月不迁移�
   assert.equal(result.plans[0].paidCents, 4000);
   assert.equal(result.plans[0].unpaidCents, 6000);
   assert.equal(result.plans[0].month, '2026-11');
+  assert.deepEqual(result.plans[0].paymentDates, ['12月1日']);
   assert.equal(result.plans[0].paymentEvidence[0].sourceCell, 'U2');
   assert.equal(result.issues.length, 0);
   const unmarked = classify('negotiated', [plan()], { status: '归档' });
@@ -73,5 +70,85 @@ test('零、负数、时间待定与跨年月份保持原值，已付加未付�
     assert.equal(result.plans[0].paidCents + result.plans[0].unpaidCents, amount);
   }
   assert.equal(classify('negotiated', [plan(null)]).plans[0].unpaidCents, 10000);
-  assert.equal(classify('normal', [plan(null, -10000)], { status: '归档' }).plans[0].paidCents, -10000);
+  assert.equal(classify('normal', [plan(null, -10000)], { status: '归档' }).plans[0].unpaidCents, -10000);
+});
+
+test('付款日期只取已付批注且不猜年份，申请日期不能作为付款日期', () => {
+  assert.deepEqual(commentPaymentDates('12月31日-已付\n2027年1月2日-已支付\n申请日期：2026年11月2日'), ['12月31日', '2027-01-02']);
+  assert.deepEqual(commentPaymentDates('申请日期：2026年11月2日 已付'), []);
+  assert.equal(commentPaymentState('申请日期：2026年11月2日 已付'), 'uncertain');
+  assert.deepEqual(commentPaymentDates('2026年2月29日-已付\n2月29日-已付'), ['2月29日']);
+  for (const note of ['11月5日-已付，申请日期：11月2日', '申请日期：11月2日，11月5日-已付', '提交时间：2026年11月2日,11月5日-已支付']) {
+    assert.deepEqual(commentPaymentDates(note), ['11月5日']);
+    assert.equal(commentPaymentState(note), 'paid');
+  }
+  for (const note of ['申请日期：11月2日-已付', '提交日期：11月2日-已支付']) {
+    assert.deepEqual(commentPaymentDates(note), []);
+    assert.equal(commentPaymentState(note), 'uncertain');
+  }
+});
+
+const progressRecord = (extra = {}) => ({ key: 'schedule:正常付款:2', slotId: 'schedule', sourceSheet: '正常付款', sourceRow: 2,
+  category: 'normal', flowCode: 'MDST-DGFK20261101001', supplier: '样例供应商', payer: '样例主体', amountCents: 10000,
+  paidCents: 0, plans: [plan()], ...extra });
+const progressRow = (extra = {}) => ({ sourceSheet: '付款进度整理', sourceRow: 2, flowCode: 'MDST-DGFK20261101001',
+  supplier: '样例供应商', payer: '样例主体', amountCents: 10000, status: '已付款', ...extra });
+const resolve = (record, rows, available = true) => resolveProgressPayments([record], { rows, available }, { id: 'v1', filename: '样例.xlsx' });
+
+test('正常付款与三类预估明确关联已付款，归档与申请时间不作为依据且不修改原对象', () => {
+  for (const category of ['normal', 'shipment', 'after_sales', 'unregistered']) {
+    const original = progressRecord({ category, sourceSheet: category === 'normal' ? '正常付款' : '谈判付款', status: '未归档' });
+    const result = resolve(original, [progressRow()]);
+    const resolved = result.records[0].plans[0];
+    assert.equal(resolved.paidCents, 10000);
+    assert.equal(resolved.unpaidCents, 0);
+    assert.deepEqual(resolved.paymentDates, []);
+    assert.deepEqual(resolved.paymentProgressVersion, { id: 'v1', filename: '样例.xlsx' });
+    assert.equal(resolved.paymentEvidence[0].sourceRow, 2);
+    assert.equal(original.plans[0].paidCents, undefined);
+  }
+  for (const category of ['negotiated', 'negotiated_normal']) {
+    const original = progressRecord({ category, sourceSheet: '谈判付款', plans: classify(category, [plan()]).plans });
+    assert.equal(resolve(original, [progressRow()]).records[0].plans[0].paidCents, 0);
+  }
+});
+
+test('进度缺失、无有效流程号、未匹配及非已付款状态全计未付并说明原因', () => {
+  const checks = [
+    resolve(progressRecord(), [], false), resolve(progressRecord({ flowCode: '' }), [progressRow()]),
+    resolve(progressRecord({ flowCode: '未匹配' }), [progressRow({ flowCode: '未匹配' })]),
+    resolve(progressRecord(), []),
+    ...['', '未付款', '重新申请', '已支付', '未已付款', '已付款中'].map(status => resolve(progressRecord({ status: '已归档' }), [progressRow({ status })])),
+  ];
+  for (const result of checks) {
+    assert.equal(result.records[0].plans[0].paidCents, 0);
+    assert.equal(result.records[0].plans[0].unpaidCents, 10000);
+    assert.ok(result.issues.some(issue => issue.code === 'PAYMENT_PROGRESS_REVIEW'));
+    assert.match(result.records[0].plans[0].paymentBasis, /计未付/);
+  }
+});
+
+test('同号多笔按金额供应商付款主体消歧，重复候选与状态冲突不猜已付', () => {
+  const rows = [progressRow({ sourceRow: 2, amountCents: 20000, status: '未付款' }),
+    progressRow({ sourceRow: 3, supplier: '其他供应商', status: '未付款' }),
+    progressRow({ sourceRow: 4, payer: '其他主体', status: '未付款' }), progressRow({ sourceRow: 5 })];
+  assert.equal(resolve(progressRecord(), rows).records[0].plans[0].paidCents, 10000);
+  assert.equal(resolve(progressRecord(), rows).records[0].plans[0].paymentEvidence[0].sourceRow, 5);
+  for (const extra of [progressRow({ sourceRow: 6 }), progressRow({ sourceRow: 6, status: '未付款' })]) {
+    const result = resolve(progressRecord(), [...rows, extra]);
+    assert.equal(result.records[0].plans[0].paidCents, 0);
+    assert.match(result.records[0].plans[0].paymentBasis, /多笔|冲突/);
+  }
+  assert.match(resolve(progressRecord(), [progressRow({ amountCents: 1 })]).records[0].plans[0].paymentBasis, /不一致/);
+});
+
+test('进度解析保留零负金额及待定日期，已付未付之和保持原金额', () => {
+  for (const amountCents of [0, -10000, 10000]) {
+    for (const status of ['已付款', '未付款']) {
+      const result = resolve(progressRecord({ amountCents, plans: [plan(null, amountCents)] }), [progressRow({ amountCents, status })]).records[0].plans[0];
+      assert.equal(result.month, null);
+      assert.equal(result.paidCents + result.unpaidCents, amountCents);
+      assert.equal(result.paidCents, status === '已付款' ? amountCents : 0);
+    }
+  }
 });

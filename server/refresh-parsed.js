@@ -1,4 +1,4 @@
-import { PARSER_VERSION } from '../shared/constants.js';
+import { PARSER_VERSION, SLOTS } from '../shared/constants.js';
 import { audit, transaction } from './db.js';
 import { runParser } from './parse-job.js';
 
@@ -8,7 +8,8 @@ export async function refreshParsedVersions(db) {
     COALESCE(c.parser_version, json_extract(v.parsed_json, '$.parserVersion')) AS parser_version
     FROM file_versions v LEFT JOIN file_parse_cache c ON c.version_id=v.id
     WHERE json_extract(v.parsed_json, '$.parserVersion') IS NOT ? AND c.parser_version IS NOT ?
-    ORDER BY v.rowid`).all(PARSER_VERSION, PARSER_VERSION);
+    AND v.slot_id IN (${SLOTS.map(() => '?').join(',')})
+    ORDER BY v.rowid`).all(PARSER_VERSION, PARSER_VERSION, ...SLOTS.map(slot => slot.id));
   if (!versions.length) return 0;
   const refreshed = [];
   // Parse every original before writing, so a bad historical file leaves all caches unchanged.
@@ -16,7 +17,7 @@ export async function refreshParsedVersions(db) {
     try {
       const { content } = db.prepare('SELECT content FROM file_versions WHERE id=?').get(version.id);
       const parsed = await runParser('parse', Buffer.from(content), {
-        slotId: version.slot_id, selectedSheets: JSON.parse(version.selected_sheets_json),
+        slotId: version.slot_id, selectedSheets: JSON.parse(version.selected_sheets_json), allowLegacyProgress: true,
       });
       refreshed.push({ version, parsed });
     } catch {

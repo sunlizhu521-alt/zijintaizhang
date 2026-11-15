@@ -39,6 +39,8 @@ test('分期批注经上传持久化、父子汇总及导出后已付未付一�
   const details = book.getWorksheet('筛选明细');
   assert.equal(valueByHeader(details, 2, '选定范围已付（新规则）'), 150);
   assert.match(valueByHeader(details, 2, '付款判定依据'), /P2.*150元.*11月5日核实-已支付/s);
+  assert.equal(valueByHeader(details, 2, '批注付款日期'), '2026-11：11月5日');
+  assert.match(valueByHeader(details, 3, '付款依据版本'), /xlsx.*[a-f0-9-]{36}/);
 });
 
 test('完整 API 挂载的认证、CSRF、Origin 与 JSON 拒绝均在产生副作用前生效并记录', async t => {
@@ -309,17 +311,24 @@ test('筛选导出可重新读取，时间待定中文显示，无 Table/隐藏�
   assert.match(response.headers.get('content-type'), /spreadsheetml/);
   const workbook = new ExcelJS.Workbook();
   await workbook.xlsx.load(response.bytes);
-  assert.deepEqual(workbook.worksheets.map(sheet => sheet.name), ['月度付款汇总', '筛选明细', '统计口径', '待核对']);
+  assert.deepEqual(workbook.worksheets.map(sheet => sheet.name), ['月度付款汇总', '时间待定付款汇总', '筛选明细', '统计口径', '待核对']);
   const monthly = workbook.getWorksheet('月度付款汇总');
+  const pending = workbook.getWorksheet('时间待定付款汇总');
+  assert.ok(!monthly.getRow(1).values.some(value => String(value).includes('时间待定')));
+  assert.ok(!pending.getRow(1).values.some(value => String(value).includes('所选期间')));
   assert.equal(monthly.rowCount, 11);
-  for (const row of [3, 5, 6]) assert.equal(valueByHeader(monthly, row, '时间待定合计（元）'), 0);
+  for (const row of [3, 5, 6]) assert.equal(valueByHeader(pending, row, '时间待定合计（元）'), 0);
   assert.equal(valueByHeader(monthly, 8, '2026-11合计（元）'), 0);
-  assert.equal(valueByHeader(monthly, 8, '时间待定未付（元）'), 30);
+  assert.equal(valueByHeader(pending, 8, '时间待定未付（元）'), 30);
+  assert.equal(valueByHeader(pending, 11, '时间待定合计（元）'), 30);
   assert.equal(valueByHeader(monthly, 8, '所选期间合计（元）'), 0);
   assert.equal(valueByHeader(monthly, 11, '2026-11已付（元）'), 200);
   assert.equal(valueByHeader(monthly, 11, '2026-11未付（元）'), 600);
   assert.equal(valueByHeader(monthly, 11, '所选期间合计（元）'), 800);
-  for (const row of [9, 10]) for (const month of ['2026-11', '时间待定']) assert.equal(valueByHeader(monthly, row, `${month}合计（元）`), '未上传');
+  for (const row of [9, 10]) {
+    assert.equal(valueByHeader(monthly, row, '2026-11合计（元）'), '未上传');
+    assert.equal(valueByHeader(pending, row, '时间待定合计（元）'), '未上传');
+  }
   const details = workbook.getWorksheet('筛选明细');
   assert.equal(details.rowCount, 4);
   assert.equal(details.getCell('E2').value, 600);

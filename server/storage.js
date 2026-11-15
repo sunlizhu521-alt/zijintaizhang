@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { ALL_SLOTS, PARSER_VERSION, SLOTS } from '../shared/constants.js';
 import { audit, transaction } from './db.js';
+import { resolveProgressPayments } from './payment-progress.js';
 
 export function initializeStorage(db) {
   db.exec(`
@@ -117,15 +118,26 @@ export function getVersion(db, slotId, id) {
   if (!row) throw fail(404, '文件版本不存在');
   return row;
 }
+const progressVersion = row => row ? ({ id: row.id, filename: row.filename, uploadedAt: row.uploaded_at, uploadedBy: row.uploaded_by }) : null;
+function currentProgress(db) {
+  const row = db.prepare(`SELECT v.*, COALESCE(c.parsed_json,v.parsed_json) AS effective_parsed_json
+    FROM file_slots s JOIN file_versions v ON v.id=s.current_version_id
+    LEFT JOIN file_parse_cache c ON c.version_id=v.id AND c.parser_version=? WHERE s.id='schedule'`).get(PARSER_VERSION);
+  return { progress: row ? JSON.parse(row.effective_parsed_json).paymentProgress : null, source: progressVersion(row) };
+}
 export function versionDetails(db, slotId, id) {
   const row = getVersion(db, slotId, id);
   const cached = db.prepare('SELECT parsed_json,record_count,issue_count FROM file_parse_cache WHERE version_id=? AND parser_version=?')
     .get(id, PARSER_VERSION);
   const parsed = JSON.parse(cached?.parsed_json ?? row.parsed_json);
+  const context = slotId === 'schedule' ? { progress: parsed.paymentProgress, source: progressVersion(row) } :
+    parsed.kind === 'archive' ? { progress: null, source: null } : currentProgress(db);
+  const resolved = resolveProgressPayments(parsed.records.map(r => ({ ...r, filename: row.filename, versionId: row.id, slotId })), context.progress, context.source);
   return { version: versionInfo({ ...row, ...cached, current: requireSlot(db, slotId).current_version_id === id }),
     ...(parsed.kind === 'archive' ? { kind: parsed.kind, sheets: parsed.sheets, selectedSheets: parsed.selectedSheets } : {}),
-    records: parsed.records.map(r => ({ ...r, filename: row.filename, versionId: row.id, slotId })),
-    issues: parsed.issues.map(i => ({ ...i, versionId: row.id, slotId })) };
+    progressSource: context.source, progressScope: slotId === 'schedule' ? 'self' : 'current',
+    records: resolved.records,
+    issues: [...parsed.issues.map(i => ({ ...i, versionId: row.id, slotId })), ...resolved.issues] };
 }
 export function restoreVersion(db, slotId, id, revision, event) {
   return transaction(db, () => {
@@ -149,5 +161,7 @@ export function activeData(db) {
     records.push(...parsed.records.map(r => ({ ...r, slotId: row.slot_id, versionId: row.id, filename: row.filename })));
     issues.push(...parsed.issues.map(i => ({ ...i, slotId: row.slot_id, versionId: row.id })));
   }
-  return { records, issues, slots: listSlots(db) };
+  const context = currentProgress(db);
+  const resolved = resolveProgressPayments(records, context.progress, context.source);
+  return { records: resolved.records, issues: [...issues, ...resolved.issues], slots: listSlots(db) };
 }

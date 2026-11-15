@@ -94,7 +94,7 @@ export function buildDashboard(records, issues = [], slots = [], filters = {}) {
   const relevant = records.filter(record => ['supplier', 'payer', 'owner', 'category'].every(name =>
     !filters[name] || normalize(record[name]) === normalize(filters[name])));
   const monthMatches = month => {
-    if (filters.month) return filters.month === 'pending' ? month === null : month === filters.month;
+    if (filters.month) return filters.month === 'pending' ? month === null : month === null || month === filters.month;
     // 未明确月份始终单列，且不计入期间金额卡片。
     return month === null || ((!filters.from || month >= filters.from) && (!filters.to || month <= filters.to));
   };
@@ -151,7 +151,8 @@ export function buildDashboard(records, issues = [], slots = [], filters = {}) {
   return {
     summary,
     months,
-    paymentTable: buildPaymentTable(selectedRecords, months.map(row => row.month), slots),
+    paymentTable: buildPaymentTable(selectedRecords, months.filter(row => row.month !== 'pending').map(row => row.month), slots),
+    pendingPaymentTable: buildPaymentTable(selectedRecords, ['pending'], slots),
     records: selectedRecords,
     issues: uniqueIssues,
     options: { suppliers: option('supplier'), payers: option('payer'), owners: option('owner'),

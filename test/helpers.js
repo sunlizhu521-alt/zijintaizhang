@@ -99,6 +99,10 @@ export async function syntheticSchedule() {
   normal.addRow(['跟单员', '供应商名称', '付款主体', '对公付款0A流程号', '摘要', '本次申请付款金额', '应付时间', '已付金额', '剩余金额', '是否结清', '流程状态']);
   normal.addRow(['乙', '合成供应商乙', '合成主体', 'MDST-DGFK20261101002', '正常款', 200, '2026年11月05日', 200, 0, '是', '归档']);
   normal.addRow(['乙', '合成供应商丙', '合成主体', 'MDST-DGFK20261101003', '正常款', 300, '2026年12月05日', null, 300, '否', '未归档']);
+  const progress = workbook.addWorksheet('付款进度整理');
+  progress.addRow(['对公付款OA号', '申请付款金额', '供应商名称', '付款主体', '是否已付款']);
+  progress.addRow(['MDST-DGFK20261101002', 200, '合成供应商乙', '合成主体', '已付款']);
+  progress.addRow(['MDST-DGFK20261101003', 300, '合成供应商丙', '合成主体', '未付款']);
   return Buffer.from(await workbook.xlsx.writeBuffer());
 }
 

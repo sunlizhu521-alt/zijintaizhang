@@ -49,7 +49,7 @@ export default function Files({ user, orders = false }) {
       const slot = { ...definition, ...slots.find(value => value.id === definition.id) };
       return <section className="panel file-card" key={slot.id}>
         <div className="file-card-heading"><span className="file-icon" aria-hidden="true">X</span><div><h2>{slot.label}</h2><span className={`tag ${slot.currentVersionId ? 'success' : 'neutral'}`}>{slot.currentVersionId ? '已有有效版本' : '尚未上传'}</span></div></div>
-        <p className="file-description">{orders ? '保存完整原始工作簿。上传新版本后，旧文件仍可下载或恢复。' : slot.id === 'schedule' ? '一个工作簿，三类付款数据。必须包含谈判付款、正常付款；谈判表须填写“是否谈判分批”。' : '按人员工作表读取预估月份、供应商、付款主体、金额和备注。'}</p>
+        <p className="file-description">{orders ? '保存完整原始工作簿。上传新版本后，旧文件仍可下载或恢复。' : slot.id === 'schedule' ? '须包含谈判付款、正常付款、付款进度整理；谈判表须填写“是否谈判分批”。进度表提供付款依据。' : '按人员工作表读取预估月份、供应商、付款主体、金额和备注。'}</p>
         {slot.currentVersionId ? <><div className="file-name" title={slot.filename}>{slot.filename}</div><dl className="file-metadata"><div><dt>上传人</dt><dd>{slot.uploadedBy || '—'}</dd></div><div><dt>上传时间</dt><dd>{dateTime(slot.uploadedAt)}</dd></div>{!orders && <><div><dt>有效记录</dt><dd>{slot.recordCount ?? 0} 条</dd></div><div><dt>待核对</dt><dd>{slot.issueCount ?? 0} 项</dd></div></>}</dl></> : <div className="file-placeholder">上传后显示文件版本与上传信息</div>}
         <div className="file-actions">
           {can(user, 'upload') && <><input ref={node => { inputs.current[slot.id] = node; }} type="file" accept=".xlsx" className="sr-only" id={`upload-${slot.id}`} aria-label={`上传${slot.label}`} onChange={event => upload(slot, event.target.files[0])} /><button className="primary" disabled={Boolean(busy) || loading || Boolean(error)} onClick={() => inputs.current[slot.id]?.click()}>{busy === slot.id ? '正在读取…' : slot.currentVersionId ? '上传新版本' : '上传文件'}</button></>}
@@ -64,7 +64,7 @@ export default function Files({ user, orders = false }) {
       <Notice>{orders ? '确认文件后保存完整工作簿，所有工作表和原始内容均保留。旧文件保留在版本记录中。' : '确认读取的工作表后，点击“校验并替换”。系统会重新校验并整体更新这个槽位，旧文件保留在版本记录中。'}</Notice>
       {orders ? <WorkbookSheets sheets={preview.sheets} /> : <>
       <fieldset className="sheet-picker"><legend>读取的工作表</legend>{preview.sheets?.map(sheet => <label className="check-row" key={sheet.name}><input type="checkbox" checked={selection.includes(sheet.name)} disabled={preview.slot.id === 'schedule' || !sheet.eligible || Boolean(busy)} onChange={event => setSelection(previous => event.target.checked ? [...previous, sheet.name] : previous.filter(name => name !== sheet.name))} /><span><strong>{sheet.name}</strong><small>{sheet.reason || (sheet.defaultSelected ? '默认读取' : '默认不读取，可自行选择')}</small></span></label>)}</fieldset>
-      {preview.slot.id === 'schedule' && <p className="muted">付款节奏固定同时读取两张业务表。</p>}
+      {preview.slot.id === 'schedule' && <p className="muted">固定读取谈判付款、正常付款和付款进度整理。进度表只提供付款依据，不重复计入金额。</p>}
       <div className="import-summary"><span>默认选择：<strong>{preview.recordCount ?? '—'}</strong> 条记录</span><span>待核对：<strong>{preview.issueCount ?? preview.issues?.length ?? 0}</strong> 项</span>{preview.categoryCounts && Object.entries(preview.categoryCounts).map(([key, count]) => <span key={key}>{CATEGORIES[key] || key}：{count} 条</span>)}</div>
       <p className="muted">更改工作表选择后，以最终校验结果为准。</p>
       </>}
@@ -96,7 +96,9 @@ function History({ slot, user, refresh, onClose, onRestore }) {
     <ErrorNotice error={error || actionError} />
     {loading ? <Loading /> : !data?.versions?.length ? <Empty title="暂无历史版本" /> : <div className="table-wrap"><table aria-label="文件版本记录"><thead><tr><th>文件 / 状态</th><th>上传人</th><th>上传时间</th><>{!orders && <><th className="numeric">记录数</th><th className="numeric">核对项</th></>}</><th>操作</th></tr></thead><tbody>{data.versions.map(version => <tr key={version.id}><td><strong>{version.filename}</strong>{version.current && <span className="tag success current-tag">当前有效</span>}</td><td>{version.uploadedBy || '—'}</td><td className="nowrap">{dateTime(version.uploadedAt)}</td>{!orders && <><td className="numeric">{version.recordCount}</td><td className="numeric">{version.issueCount}</td></>}<td><div className="row-actions"><button disabled={Boolean(busy)} onClick={() => action(version, 'view')}>查看</button>{can(user, 'download') && <button disabled={Boolean(busy)} onClick={() => action(version, 'download')}>下载</button>}{can(user, 'restore') && !version.current && <button disabled={Boolean(busy)} onClick={() => action(version, 'restore')}>恢复为当前</button>}</div></td></tr>)}</tbody></table></div>}
     {busy && <Loading />}
-    {detail && <div className="history-detail"><div className="section-heading"><h3>{detail.version?.filename || '历史版本内容'}</h3><button onClick={() => setDetail(null)}>收起内容</button></div><>{orders ? <WorkbookSheets sheets={detail.sheets} /> : <><p className="muted">以下是该历史文件的数据快照，不影响当前看板。</p><RecordsTable records={detail.records} label="历史文件明细" /><details><summary>历史文件待核对事项</summary><IssuesTable issues={detail.issues} /></details></>}</></div>}
+    {detail && <div className="history-detail"><div className="section-heading"><h3>{detail.version?.filename || '历史版本内容'}</h3><button onClick={() => setDetail(null)}>收起内容</button></div><>{orders ? <WorkbookSheets sheets={detail.sheets} /> : <><p className="muted">以下是该历史文件的数据，不影响当前看板。</p>
+      {detail.progressScope && <Notice>{detail.progressScope === 'self' ? '付款依据使用本历史文件自身的付款进度整理。' : '付款依据使用当前有效付款节奏，随当前版本更新。'}{detail.progressSource ? ` 文件：${detail.progressSource.filename}；版本：${detail.progressSource.id?.slice(0, 8)}。` : '当前没有可关联的付款节奏版本，相关付款计未付。'}</Notice>}
+      <RecordsTable records={detail.records} label="历史文件明细" /><details><summary>历史文件待核对事项</summary><IssuesTable issues={detail.issues} /></details></>}</></div>}
   </Modal>;
 }
 

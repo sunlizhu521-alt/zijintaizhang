@@ -39,8 +39,9 @@ export default function Dashboard({ user }) {
     </section>
     <ErrorNotice error={error || actionError} />
     {loading ? <Loading /> : data && <>
-      <PaymentTable table={data.paymentTable} records={data.records} />
-      <section className="panel"><div className="section-heading"><div><h2>供应商明细 <span className="count">{data.records?.length || 0}</span></h2><p>计划已付、未付按当前月份和新规则统计；原台账金额保留供核对。</p></div>{can(user, 'export') && <button onClick={exportRows} disabled={exporting}>{exporting ? '正在导出…' : '导出当前结果'}</button>}</div><RecordsTable records={data.records} /></section>
+      {filters.month !== 'pending' && <PaymentTable key="monthly" table={data.paymentTable} records={data.records} />}
+      <PaymentTable key="pending" table={data.pendingPaymentTable} records={data.records} pending />
+      <section className="panel"><div className="section-heading"><div><h2>供应商明细 <span className="count">{data.records?.length || 0}</span></h2><p>展示所选月份及时间待定记录；已付依据可在详情中查看。</p></div>{can(user, 'export') && <button onClick={exportRows} disabled={exporting}>{exporting ? '正在导出…' : '导出当前结果'}</button>}</div><RecordsTable records={data.records} /></section>
       <section className="panel"><div className="section-heading"><div><h2>待核对事项 <span className="count warning">{data.issues?.length || 0}</span></h2><p>提示用于核对原表，不自动更改、删除或合并记录。</p></div></div><IssuesTable issues={data.issues} /></section>
     </>}
   </div>;

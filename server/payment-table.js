@@ -43,12 +43,13 @@ export function buildPaymentTable(records, months, slots) {
   const uploaded = new Set(slots.filter(slot => slot.currentVersionId).map(slot => slot.id));
   const slotNames = Object.fromEntries(SLOTS.map(slot => [slot.id, slot.label]));
   // 父级始终从原始分类求和，不累加已包含子级的中间合计。
-  return { months, rows: rows.map(row => {
+  return { months, hasRecords: records.some(record => record.selectedPlans.some(plan => months.includes(plan.month || 'pending'))), rows: rows.map(row => {
     const sourceSlots = [...new Set(row.categories.map(category => LEDGER_CATEGORIES.includes(category) ? 'schedule' : category))];
     const plans = records.filter(record => row.categories.includes(record.category)).flatMap(record => record.selectedPlans);
     const monthly = Object.fromEntries(months.map(month => [month, []]));
     const dated = [];
     for (const plan of plans) {
+      if (!Object.hasOwn(monthly, plan.month || 'pending')) continue;
       monthly[plan.month || 'pending'].push(plan);
       if (plan.month) dated.push(plan);
     }
