@@ -89,10 +89,16 @@ body:has(.funds-shell),body:has(.funds-auth){background:#F4F7FB}
 @media(max-width:900px){.funds-shell{grid-template-columns:minmax(0,1fr)}.funds-shell .sidebar{padding:14px 20px 0}.funds-shell main{padding:20px}.funds-shell .sidebar nav button.active{background:transparent}.funds-shell .sidebar nav{gap:16px}.funds-shell .sidebar-description{display:none}.brief-charts{grid-template-columns:1fr 1fr}}
 @media(max-width:620px){.funds-shell main{padding:18px 12px}.funds-shell .sidebar{padding:12px 14px 0}.funds-shell .panel{padding:14px 12px}.dashboard-page{gap:13px}.brief-heading{flex-wrap:wrap}.dashboard-page h1{font-size:23px}.dashboard-page .heading-actions{gap:8px}.heading-actions button{font-size:12px;padding:7px 10px}.brief-filter-fields{gap:12px}.brief-filter-fields>label{width:100%;min-width:0}.brief-filter-fields>label:has(input[type=month]){flex:1;width:auto}.supplier-search{flex:1 1 100%;min-width:0}.kpi-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.funds-shell .kpi-card{padding:15px 12px;min-height:100px}.kpi-value{font-size:23px}.kpi-label{font-size:11px;gap:6px}.brief-charts{grid-template-columns:minmax(0,1fr)}.range-label{font-size:10px}.ledger-tabs{gap:20px}.dashboard-page .section-heading h2{font-size:15px}.dashboard-page .section-heading button{font-size:11px}}
 
-.applied-scroll{max-height:350px}
-.applied-scroll thead th{position:sticky;top:0;z-index:2}
-.applied-scroll thead th:first-child{z-index:3}
-.applied-scroll tfoot th,.applied-scroll tfoot td{position:sticky;bottom:0;z-index:2}
-.applied-scroll td{padding:6px 8px}
-.applied-scroll .tag{padding:1px 5px;font-size:10px}
+.payment-records-scroll{max-height:350px}
+.payment-records-scroll table{min-width:1100px}
+.payment-records-scroll th:first-child,.payment-records-scroll td:first-child{width:22%}
+.payment-records-scroll th:nth-child(2),.payment-records-scroll th:nth-child(6){width:14%}
+.payment-records-scroll th:nth-child(3),.payment-records-scroll th:nth-child(4),.payment-records-scroll th:nth-child(5){width:9%}
+.payment-records-scroll th:nth-child(7){width:16%}
+.payment-records-scroll th:nth-child(8){width:7%}
+.payment-records-scroll thead th{position:sticky;top:0;z-index:2}
+.payment-records-scroll thead th:first-child{z-index:3}
+.payment-records-scroll tfoot th,.payment-records-scroll tfoot td{position:sticky;bottom:0;z-index:2}
+.payment-records-scroll td{padding:6px 8px}
+.payment-records-scroll .tag{padding:1px 5px;font-size:10px}
 .application-basis{display:inline-block;margin-left:5px;color:#6B7280;font-size:10px;white-space:nowrap}

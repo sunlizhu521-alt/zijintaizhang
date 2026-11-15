@@ -4,10 +4,10 @@ import { can, dateTime, moneyInWan, monthText, upcomingMonths } from './format.j
 import { ErrorNotice, IssuesTable, Loading } from './components.jsx';
 import PaymentTable from './PaymentTable.jsx';
 import SupplierTable from './SupplierTable.jsx';
-import { AppliedTable, ReviewTable, SupplierSearch, Trend } from './brief-sections.jsx';
+import { PaymentRecordsTable, ReviewTable, SupplierSearch, Trend } from './brief-sections.jsx';
 
 const newFilters = () => ({ ...upcomingMonths(), supplier: '', month: '' });
-const tabs = [['monthly', '月度汇总'], ['suppliers', '供应商明细'], ['applied', '已申请未付'], ['pending', '时间待定'], ['review', '待核对']];
+const tabs = [['monthly', '月度汇总'], ['suppliers', '供应商明细'], ['applied', '付款明细'], ['pending', '时间待定'], ['review', '待核对']];
 
 export default function Dashboard({ user }) {
   const [filters, setFilters] = useState(newFilters);
@@ -57,12 +57,12 @@ export default function Dashboard({ user }) {
         {summary.uncertainCount > 0 && <p className="muted compact-empty">待核对金额未参与排名</p>}
       </section><section className="panel trend-panel"><div className="section-heading"><h2>月度走势</h2><div className="trend-legend"><span className="paid">已付</span><span className="unpaid">未付</span><small>万元</small></div></div><Trend months={data.monthlyTrend || []} pending={isPending} /></section></div>
       {table}
-      <section className="panel"><div className="section-heading"><h2>已申请未付</h2><button className="text-button" onClick={() => detail('applied')}>查看全部 →</button></div><AppliedTable records={data.appliedUnpaidRecords} total={summary.appliedUnpaidCents} size={10} reviewCount={summary.applicationReviewCount} onReview={() => detail('review')} /></section>
+      <section className="panel"><div className="section-heading"><h2>付款明细</h2><button className="text-button" onClick={() => detail('applied')}>查看全部 →</button></div><PaymentRecordsTable records={data.records} summary={summary} size={10} reviewCount={summary.applicationReviewCount} onReview={() => detail('review')} /></section>
     </> : <>
       <nav className="tabs ledger-tabs" aria-label="台账页签">{tabs.map(([id, label]) => <button key={id} aria-current={tab === id ? 'page' : undefined} className={tab === id ? 'active' : ''} onClick={() => setTab(id)}>{label}</button>)}</nav>
       {tab === 'monthly' && table}
       {tab === 'suppliers' && <section className="panel"><div className="section-heading"><h2>供应商明细 <span className="count">{data.supplierGroups?.length || 0} 家</span></h2><span className="unit-label">万元</span></div><SupplierTable groups={data.supplierGroups || []} /></section>}
-      {tab === 'applied' && <section className="panel"><div className="section-heading"><h2>已申请未付</h2><span className="unit-label">万元</span></div><AppliedTable records={data.appliedUnpaidRecords} total={summary.appliedUnpaidCents} reviewCount={summary.applicationReviewCount} onReview={() => detail('review')} /></section>}
+      {tab === 'applied' && <section className="panel"><div className="section-heading"><h2>付款明细</h2><span className="unit-label">万元</span></div><PaymentRecordsTable records={data.records} summary={summary} reviewCount={summary.applicationReviewCount} onReview={() => detail('review')} /></section>}
       {tab === 'pending' && <><PaymentTable table={data.pendingPaymentTable} records={data.pendingRecords || []} pending /><section className="panel"><div className="section-heading"><h2>时间待定明细</h2><span className="unit-label">万元 · 跟随供应商筛选</span></div><SupplierTable groups={data.pendingSupplierGroups || []} /></section></>}
       {tab === 'review' && <><section className="panel"><div className="section-heading"><h2>待核对供应商</h2><span className="unit-label">万元 · 原台账金额</span></div><ReviewTable groups={data.reviewSuppliers || []} /></section><section className="panel"><div className="section-heading"><h2>待核对事项 <span className="count">{data.issues?.length || 0}</span></h2></div><IssuesTable issues={data.issues} /></section></>}
     </>)}

@@ -117,6 +117,17 @@ test('已提交状态或有效OA均算已申请，空值和占位值不算，期
   assert.equal(data.summary.appliedUnpaidCents, expected);
   assert.equal(data.summary.appliedUnpaidCents + data.summary.unappliedUnpaidCents, data.summary.remainingCents);
   assert.equal(data.appliedUnpaidRecords.reduce((sum, row) => sum + row.selectedUnpaidCents, 0), expected);
+  assert.equal(data.records.reduce((sum, row) => sum + row.selectedAppliedUnpaidCents, 0), data.summary.appliedUnpaidCents);
+  assert.equal(data.records.reduce((sum, row) => sum + row.selectedUnappliedUnpaidCents, 0), data.summary.unappliedUnpaidCents);
+  data.records.forEach((row, i) => {
+    assert.equal(row.selectedAppliedUnpaidCents, inputs[i][2] ? 90 + i : 0);
+    assert.equal(row.selectedUnappliedUnpaidCents, inputs[i][2] ? 0 : 90 + i);
+    assert.equal(row.selectedAppliedUnpaidCents + row.selectedUnappliedUnpaidCents, row.selectedUnpaidCents);
+  });
+  data.pendingRecords.forEach((row, i) => {
+    assert.equal(row.selectedAppliedUnpaidCents, inputs[i][2] ? 500 : 0);
+    assert.equal(row.selectedUnappliedUnpaidCents, inputs[i][2] ? 0 : 500);
+  });
   assert.deepEqual(data.records.map(row => row.applicationState), inputs.map(([, , yes]) => yes ? 'applied' : 'unapplied'));
   assert.equal(data.records[5].applicationStatus, '未申请');
   assert.match(data.records[5].applicationBasis, /OA/);
@@ -130,11 +141,15 @@ test('部分申请无OA无申请金额时列待核对，不推算申请额，未
   assert.equal(data.summary.applicationReviewCount, 1);
   assert.equal(data.summary.appliedUnpaidCents, null);
   assert.equal(data.summary.unappliedUnpaidCents, null);
+  assert.equal(data.records[0].selectedAppliedUnpaidCents, null);
+  assert.equal(data.records[0].selectedUnappliedUnpaidCents, null);
   assert.equal(data.appliedUnpaidRecords.length, 0);
   assert.ok(data.issues.some(issue => issue.code === 'APPLICATION_PARTIAL_REVIEW'));
   const paid = buildDashboard([{ ...partial, plans: [plan('2026-11', 100, 100)] }]);
   assert.equal(paid.summary.applicationReviewCount, 0);
   assert.equal(paid.summary.appliedUnpaidCents, 0);
+  assert.equal(paid.records[0].selectedAppliedUnpaidCents, 0);
+  assert.equal(paid.records[0].selectedUnappliedUnpaidCents, 0);
   const unknown = buildDashboard([record('u1', 'negotiated', [plan('2026-11', 200, null)], { applicationStatus: '已提交' })]);
   assert.equal(unknown.summary.planCents, 200);
   assert.equal(unknown.summary.paidCents, null);
@@ -144,6 +159,28 @@ test('部分申请无OA无申请金额时列待核对，不推算申请额，未
   assert.equal(unknown.monthlyTrend[0].unpaidCents, null);
   assert.equal(unknown.topSuppliers.length, 0);
   assert.equal(unknown.supplierGroups[0].paidCents, null);
+  assert.equal(unknown.records[0].selectedAppliedUnpaidCents, null);
+  assert.equal(unknown.records[0].selectedUnappliedUnpaidCents, 0);
+  const unknownUnapplied = buildDashboard([record('u2', 'negotiated', [plan('2026-11', 200, null)])]);
+  assert.equal(unknownUnapplied.records[0].selectedAppliedUnpaidCents, 0);
+  assert.equal(unknownUnapplied.records[0].selectedUnappliedUnpaidCents, null);
+  assert.equal(unknownUnapplied.summary.unappliedUnpaidCents, null);
+});
+
+test('逐笔申请未付拆分保留已付清零、有效零和冲减金额，合计与期间汇总一致', () => {
+  const records = [
+    record('r1', 'normal', [plan('2026-11', 100, 100)], { applicationStatus: '是' }),
+    record('r2', 'normal', [plan('2026-11', 50, 50)]),
+    record('r3', 'normal', [plan('2026-11', 0)], { applicationStatus: '已经提交部分' }),
+    record('r4', 'normal', [plan('2026-11', -30)], { applicationStatus: '是' }),
+    record('r5', 'normal', [plan('2026-11', -10)]),
+  ];
+  const data = buildDashboard(records);
+  assert.deepEqual(data.records.map(row => [row.selectedAppliedUnpaidCents, row.selectedUnappliedUnpaidCents]),
+    [[0, 0], [0, 0], [0, 0], [-30, 0], [0, -10]]);
+  assert.equal(data.summary.appliedUnpaidCents, -30);
+  assert.equal(data.summary.unappliedUnpaidCents, -10);
+  assert.equal(data.summary.remainingCents, -40);
 });
 
 test('待核对供应商按当前期间recordKey去重，原台账金额与期间金额隔离', () => {

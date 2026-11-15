@@ -53,10 +53,21 @@ test('分期批注经上传持久化、父子汇总及导出后已付未付一�
   assert.equal(valueByHeader(metrics, rowByLabel(metrics, '期间已付'), '金额或说明'), dashboard.summary.paidCents / 100);
   assert.equal(valueByHeader(metrics, rowByLabel(metrics, '期间未付'), '金额或说明'), dashboard.summary.remainingCents / 100);
   assert.equal(valueByHeader(metrics, rowByLabel(metrics, '已申请未付'), '金额或说明'), 450);
-  const applied = book.getWorksheet('已申请未付');
-  assert.equal(applied.rowCount, 2);
-  assert.equal(valueByHeader(applied, 2, '已申请未付金额（元）'), 450);
-  assert.match(valueByHeader(applied, 2, '申请判定依据'), /OA/);
+  const paymentDetails = book.getWorksheet('付款明细');
+  assert.equal(paymentDetails.rowCount, dashboard.records.length + 1);
+  assert.equal(valueByHeader(paymentDetails, 2, '总金额（元）'), 600);
+  assert.equal(valueByHeader(paymentDetails, 2, '已申请未付金额（元）'), 450);
+  assert.equal(valueByHeader(paymentDetails, 2, '未申请金额（元）'), 0);
+  assert.match(valueByHeader(paymentDetails, 2, '申请判定依据'), /OA/);
+  assert.equal(valueByHeader(paymentDetails, 3, '总金额（元）'), 200);
+  assert.equal(valueByHeader(paymentDetails, 3, '已申请未付金额（元）'), 0);
+  assert.equal(valueByHeader(paymentDetails, 3, '未申请金额（元）'), 0);
+  assert.equal(valueByHeader(paymentDetails, 4, '未申请金额（元）'), 10);
+  for (const [header, cents] of [['总金额（元）', dashboard.summary.planCents],
+    ['已申请未付金额（元）', dashboard.summary.appliedUnpaidCents], ['未申请金额（元）', dashboard.summary.unappliedUnpaidCents]]) {
+    const total = paymentDetails.getRows(2, dashboard.records.length).reduce((sum, row) => sum + valueByHeader(paymentDetails, row.number, header), 0);
+    assert.equal(total, cents / 100);
+  }
 });
 
 
@@ -374,7 +385,7 @@ test('筛选导出可重新读取，时间待定中文显示，无 Table/隐藏�
   assert.match(response.headers.get('content-type'), /spreadsheetml/);
   const workbook = new ExcelJS.Workbook();
   await workbook.xlsx.load(response.bytes);
-  assert.deepEqual(workbook.worksheets.map(sheet => sheet.name), ['月度付款汇总', '时间待定付款汇总', '筛选明细', '时间待定明细', '已申请未付', '统计口径', '待核对']);
+  assert.deepEqual(workbook.worksheets.map(sheet => sheet.name), ['月度付款汇总', '时间待定付款汇总', '筛选明细', '时间待定明细', '付款明细', '统计口径', '待核对']);
   const monthly = workbook.getWorksheet('月度付款汇总');
   const pending = workbook.getWorksheet('时间待定付款汇总');
   assert.ok(!monthly.getRow(1).values.some(value => String(value).includes('时间待定')));

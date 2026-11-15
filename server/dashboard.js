@@ -107,8 +107,12 @@ function applicationOf(record) {
 
 function scopedRecord(record, plans) {
   const totals = paymentPlanTotals(plans);
-  return { ...record, ...applicationOf(record), selectedPlans: plans, selectedPlanCents: totals.totalCents,
-    selectedPaidCents: totals.paidCents, selectedUnpaidCents: totals.unpaidCents };
+  const application = applicationOf(record);
+  const applicationUnknown = application.applicationState === 'review' && totals.unpaidCents !== 0;
+  return { ...record, ...application, selectedPlans: plans, selectedPlanCents: totals.totalCents,
+    selectedPaidCents: totals.paidCents, selectedUnpaidCents: totals.unpaidCents,
+    selectedAppliedUnpaidCents: applicationUnknown ? null : application.applicationState === 'applied' ? totals.unpaidCents : 0,
+    selectedUnappliedUnpaidCents: applicationUnknown ? null : application.applicationState === 'unapplied' ? totals.unpaidCents : 0 };
 }
 
 function supplierGroups(records) {
