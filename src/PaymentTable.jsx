@@ -53,8 +53,8 @@ export default function PaymentTable({ table, records = [], pending = false }) {
       return next;
     });
   }
-  return <section ref={panelRef} className="panel payment-panel" aria-label={title}>
-    <div className="section-heading"><div><h2>{title}</h2><p>{pending ? '未明确计划月份的记录单独汇总，不受月份范围筛选影响。' : '仅汇总明确计划月份的记录，点击金额查看付款依据。'}</p></div>
+  const content = <>
+    <div className="section-heading"><div>{!pending && <h2>{title}</h2>}<p>{pending ? '未明确计划月份的记录单独汇总，不受月份范围筛选影响。' : '仅汇总明确计划月份的记录，点击金额查看付款依据。'}</p></div>
       {hasRecords && <button aria-label={`${title} ${expanded.size ? '全部收起' : '全部展开'}`} onClick={() => setExpanded(expanded.size ? new Set() : new Set(parents))}>{expanded.size ? '全部收起' : '全部展开'}</button>}
     </div>
     {!hasRecords ? <Empty title={pending ? '暂无时间待定记录' : '当前区间暂无计划'}>{pending ? '当前筛选条件下，没有未明确计划月份的记录。' : '可调整月份筛选，或在文件管理中上传数据。'}</Empty> : <div className="payment-table-groups">
@@ -85,5 +85,8 @@ export default function PaymentTable({ table, records = [], pending = false }) {
       </div>)}
     </div>}
     {selection && <Modal title={selection.title} onClose={() => setSelection(null)} wide><RecordsTable records={selectedRecords} label="汇总金额对应明细" fitWidth /></Modal>}
+  </>;
+  return <section ref={panelRef} className="panel payment-panel" aria-label={title}>
+    {pending ? <details className="section-collapse" onToggle={event => { if (!event.currentTarget.open) setExpanded(new Set()); }}><summary><h2>{title}</h2></summary>{content}</details> : content}
   </section>;
 }

@@ -1,9 +1,11 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { CATEGORIES } from '../shared/constants.js';
 import { download, queryString, useResource } from './api.js';
 import { can, monthText, upcomingMonths } from './format.js';
-import { ErrorNotice, IssuesTable, Loading, RecordsTable } from './components.jsx';
+import { ErrorNotice, IssuesTable, Loading } from './components.jsx';
 import PaymentTable from './PaymentTable.jsx';
+import SupplierTable from './SupplierTable.jsx';
+import { groupSuppliers } from './supplier-data.js';
 
 const newFilters = () => ({ ...upcomingMonths(), supplier: '', payer: '', owner: '', category: '', month: '' });
 
@@ -16,6 +18,7 @@ export default function Dashboard({ user }) {
   const query = queryString(filters);
   const { data, loading, error } = useResource(`/dashboard?${query}`, refresh);
   const options = data?.options || {};
+  const suppliers = useMemo(() => groupSuppliers(data?.records || []), [data?.records]);
   const update = (name, value) => setFilters(previous => ({ ...previous, [name]: value, month: period === 'pending' ? 'pending' : '' }));
   function changePeriod(value) {
     setPeriod(value);
@@ -40,9 +43,9 @@ export default function Dashboard({ user }) {
     <ErrorNotice error={error || actionError} />
     {loading ? <Loading /> : data && <>
       {filters.month !== 'pending' && <PaymentTable key="monthly" table={data.paymentTable} records={data.records} />}
+      <section className="panel"><div className="section-heading"><div><h2>供应商明细 <span className="count">{suppliers.length} 家</span></h2><p>每个供应商一行，金额包含所选月份及时间待定记录；点击查看详情展开原始付款明细。</p></div>{can(user, 'export') && <button onClick={exportRows} disabled={exporting}>{exporting ? '正在导出…' : '导出当前结果'}</button>}</div><SupplierTable groups={suppliers} /></section>
       <PaymentTable key="pending" table={data.pendingPaymentTable} records={data.records} pending />
-      <section className="panel"><div className="section-heading"><div><h2>供应商明细 <span className="count">{data.records?.length || 0}</span></h2><p>展示所选月份及时间待定记录；已付依据可在详情中查看。</p></div>{can(user, 'export') && <button onClick={exportRows} disabled={exporting}>{exporting ? '正在导出…' : '导出当前结果'}</button>}</div><RecordsTable records={data.records} fitWidth /></section>
-      <section className="panel"><div className="section-heading"><div><h2>待核对事项 <span className="count warning">{data.issues?.length || 0}</span></h2><p>提示用于核对原表，不自动更改、删除或合并记录。</p></div></div><IssuesTable issues={data.issues} /></section>
+      <section className="panel"><details className="section-collapse"><summary><h2>待核对事项 <span className="count warning">{data.issues?.length || 0}</span></h2></summary><p className="collapse-note">提示用于核对原表，不自动更改、删除或合并记录。</p><IssuesTable issues={data.issues} /></details></section>
     </>}
   </div>;
 }
