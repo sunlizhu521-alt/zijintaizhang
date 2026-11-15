@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { money, moneyInWan, monthText } from './format.js';
 import { Empty, Modal, RecordsTable } from './components.jsx';
 
@@ -17,6 +17,7 @@ function detailRecords(records, selection) {
 export default function PaymentTable({ table, records = [], pending = false }) {
   const [expanded, setExpanded] = useState(new Set());
   const [selection, setSelection] = useState(null);
+  const selectedRecords = useMemo(() => detailRecords(records, selection), [records, selection]);
   const [columnsPerTable, setColumnsPerTable] = useState(4);
   const panelRef = useRef(null);
   useEffect(() => { setSelection(null); }, [records]);
@@ -83,6 +84,6 @@ export default function PaymentTable({ table, records = [], pending = false }) {
       </table>
       </div>)}
     </div>}
-    {selection && <Modal title={selection.title} onClose={() => setSelection(null)} wide><RecordsTable records={detailRecords(records, selection)} label="汇总金额对应明细" fitWidth /></Modal>}
+    {selection && <Modal title={selection.title} onClose={() => setSelection(null)} wide><RecordsTable records={selectedRecords} label="汇总金额对应明细" fitWidth /></Modal>}
   </section>;
 }
