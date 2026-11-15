@@ -24,6 +24,10 @@ export function Pager({ page, total, size = 20, onChange }) {
   const pages = Math.max(1, Math.ceil(total / size));
   return <div className="pagination"><span>共 {total} 条 · 第 {Math.min(page, pages)} / {pages} 页</span><div><button disabled={page <= 1} onClick={() => onChange(page - 1)}>上一页</button><button disabled={page >= pages} onClick={() => onChange(page + 1)}>下一页</button></div></div>;
 }
+function selectedPayment(record, key) {
+  const plans = record.selectedPlans || record.plans || [];
+  return plans.some(plan => plan[key] == null) ? '待核对' : money(plans.reduce((sum, plan) => sum + plan[key], 0));
+}
 export function RecordDetail({ record, onClose }) {
   return <Modal title="记录详情" onClose={onClose} wide>
     <dl className="detail-grid">
@@ -34,7 +38,7 @@ export function RecordDetail({ record, onClose }) {
         ['来源文件', record.filename], ['工作表 / 行号', `${record.sourceSheet} · 第 ${record.sourceRow} 行`], ['备注', record.notes],
       ].map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value == null || value === '' ? '—' : String(value)}</dd></div>)}
     </dl>
-    <h3>付款计划</h3><div className="table-wrap"><table><thead><tr><th>月份</th><th className="numeric">计划金额（元）</th></tr></thead><tbody>{record.plans?.map((plan, i) => <tr key={i}><td>{monthText(plan.month)}</td><td className="numeric">{money(plan.amountCents)}</td></tr>)}</tbody></table></div>
+    <h3>付款计划与判定依据</h3><div className="table-wrap"><table aria-label="记录付款计划与依据"><thead><tr><th>月份</th><th className="numeric">计划金额（元）</th><th className="numeric">计划已付（元）</th><th className="numeric">计划未付（元）</th><th>判定依据</th></tr></thead><tbody>{(record.selectedPlans || record.plans)?.map((plan, i) => <tr key={i}><td className="nowrap">{monthText(plan.month)}</td><td className="numeric">{money(plan.amountCents)}</td><td className="numeric">{plan.paidCents == null ? '待核对' : money(plan.paidCents)}</td><td className="numeric">{plan.unpaidCents == null ? '待核对' : money(plan.unpaidCents)}</td><td className="payment-evidence">{plan.paymentBasis || '未提供'}{plan.paymentEvidence?.map((evidence, index) => <div key={index}><strong>{evidence.sourceCell}{evidence.amountCents == null ? '' : ` · ${money(evidence.amountCents)} 元`}</strong>{evidence.comment && <span>{evidence.comment}</span>}</div>)}</td></tr>)}</tbody></table></div>
     {record.raw && <details className="raw-details"><summary>查看原始字段</summary><dl className="detail-grid">{Object.entries(record.raw).map(([key, value]) => <div key={key}><dt>{key}</dt><dd>{typeof value === 'object' && value !== null ? JSON.stringify(value) : String(value ?? '')}</dd></div>)}</dl></details>}
     {record.comments && Object.keys(record.comments).length > 0 && <details className="raw-details"><summary>查看单元格批注（{Object.keys(record.comments).length}）</summary><dl className="detail-grid">{Object.entries(record.comments).map(([cell, comment]) => <div key={cell}><dt>{cell}</dt><dd>{String(comment)}</dd></div>)}</dl></details>}
   </Modal>;
@@ -46,8 +50,8 @@ export function RecordsTable({ records = [], label = '供应商明细' }) {
   const pageRecords = records.slice((page - 1) * 20, page * 20);
   return <>
     {!records.length ? <Empty title="没有符合条件的记录">可调整筛选条件，或在文件管理中上传数据。</Empty> : <>
-      <div className="table-wrap"><table aria-label={label}><thead><tr><th>供应商 / 摘要</th><th>类别</th><th>付款主体</th><th>跟单员</th><th className="numeric">期间计划（元）</th><th className="numeric">原台账已付（元）</th><th className="numeric">原台账剩余（元）</th><th>流程状态</th><th>来源</th><th>详情</th></tr></thead><tbody>
-        {pageRecords.map((record, i) => <tr key={`${record.slotId}-${record.key}-${i}`}><td><strong className="supplier-name">{record.supplier || '未填写'}</strong><span className="cell-secondary">{record.summary || '—'}</span></td><td><span className={`tag category-${record.category}`}>{CATEGORIES[record.category]}</span></td><td>{record.payer || '—'}</td><td>{record.owner || '—'}</td><td className="numeric amount">{money(planAmount(record))}</td><td className="numeric">{money(record.paidCents)}</td><td className="numeric">{money(record.remainingCents)}</td><td>{record.status || '—'}</td><td className="muted">{record.sourceSheet}<span className="cell-secondary">第 {record.sourceRow} 行</span></td><td><button className="text-button" onClick={() => setSelected(record)} aria-label={`查看${record.supplier || '该记录'}第${record.sourceRow}行详情`}>查看</button></td></tr>)}
+      <div className="table-wrap"><table aria-label={label}><thead><tr><th>供应商 / 摘要</th><th>类别</th><th>付款主体</th><th>跟单员</th><th className="numeric">所选计划（元）</th><th className="numeric">计划已付（元）</th><th className="numeric">计划未付（元）</th><th className="numeric">原台账已付（元）</th><th className="numeric">原台账剩余（元）</th><th>流程状态</th><th>来源</th><th>详情</th></tr></thead><tbody>
+        {pageRecords.map((record, i) => <tr key={`${record.slotId}-${record.key}-${i}`}><td><strong className="supplier-name">{record.supplier || '未填写'}</strong><span className="cell-secondary">{record.summary || '—'}</span></td><td><span className={`tag category-${record.category}`}>{CATEGORIES[record.category]}</span></td><td>{record.payer || '—'}</td><td>{record.owner || '—'}</td><td className="numeric amount">{money(planAmount(record))}</td><td className="numeric">{selectedPayment(record, 'paidCents')}</td><td className="numeric">{selectedPayment(record, 'unpaidCents')}</td><td className="numeric">{money(record.paidCents)}</td><td className="numeric">{money(record.remainingCents)}</td><td>{record.status || '—'}</td><td className="muted">{record.sourceSheet}<span className="cell-secondary">第 {record.sourceRow} 行</span></td><td><button className="text-button" onClick={() => setSelected(record)} aria-label={`查看${record.supplier || '该记录'}第${record.sourceRow}行详情`}>查看</button></td></tr>)}
       </tbody></table></div><Pager page={page} total={records.length} onChange={setPage} />
     </>}
     {selected && <RecordDetail record={selected} onClose={() => setSelected(null)} />}

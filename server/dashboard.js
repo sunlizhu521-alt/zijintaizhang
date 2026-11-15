@@ -1,4 +1,5 @@
 import { CATEGORIES, LEDGER_CATEGORIES } from '../shared/constants.js';
+import { buildPaymentTable, paymentPlanTotals } from './payment-table.js';
 
 const MONTH = /^\d{4}-(0[1-9]|1[0-2])$/;
 const ledgerCategories = new Set(LEDGER_CATEGORIES);
@@ -132,7 +133,9 @@ export function buildDashboard(records, issues = [], slots = [], filters = {}) {
         target[record.category] = add(target[record.category], plan.amountCents);
       }
     }
-    selectedRecords.push({ ...record, selectedPlanCents, selectedPlans: plans });
+    const selectedTotals = paymentPlanTotals(plans);
+    selectedRecords.push({ ...record, selectedPlanCents, selectedPlans: plans,
+      selectedPaidCents: selectedTotals.paidCents, selectedUnpaidCents: selectedTotals.unpaidCents });
   }
   const relevantKeys = new Set(relevant.map(record => record.key));
   const combinedIssues = [...issues, ...findDuplicateIssues(records)].filter(issue =>
@@ -144,9 +147,11 @@ export function buildDashboard(records, issues = [], slots = [], filters = {}) {
   const uniqueIssues = [...new Map(combinedIssues.map(issue =>
     [JSON.stringify([issue.code, issue.recordKey, issue.slotId, issue.message]), issue])).values()];
   const option = field => [...new Set(records.map(record => record[field]).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'zh-CN'));
+  const months = [...monthly.values()].sort((a, b) => a.month === 'pending' ? 1 : b.month === 'pending' ? -1 : a.month.localeCompare(b.month));
   return {
     summary,
-    months: [...monthly.values()].sort((a, b) => a.month === 'pending' ? 1 : b.month === 'pending' ? -1 : a.month.localeCompare(b.month)),
+    months,
+    paymentTable: buildPaymentTable(selectedRecords, months.map(row => row.month), slots),
     records: selectedRecords,
     issues: uniqueIssues,
     options: { suppliers: option('supplier'), payers: option('payer'), owners: option('owner'),

@@ -9,6 +9,38 @@ function valueByHeader(sheet, row, header) {
   return sheet.getRow(row).getCell(column).value;
 }
 
+test('分期批注经上传持久化、父子汇总及导出后已付未付一致，预估只加一次', async t => {
+  const f = await appFixture(t);
+  const admin = await f.login();
+  const source = new ExcelJS.Workbook(); await source.xlsx.load(await syntheticSchedule());
+  const sheet = source.getWorksheet('谈判付款');
+  sheet.getCell('P1').value = '2026年11月2日';
+  sheet.getCell('P2').value = 150;
+  sheet.getCell('P2').note = '11月5日核实-已支付';
+  await f.upload('schedule', Buffer.from(await source.xlsx.writeBuffer()), admin);
+  for (const [slot, cents] of [['shipment', 10], ['after_sales', 20], ['unregistered', 30]]) {
+    await f.upload(slot, await syntheticForecast(cents), admin);
+  }
+  const query = '?from=2026-11&to=2026-11';
+  const dashboard = (await f.request(`/dashboard${query}`, { session: admin })).data;
+  const total = dashboard.paymentTable.rows.find(row => row.id === 'total');
+  assert.deepEqual(total.cells['2026-11'], { paidCents: 35000, unpaidCents: 51000, totalCents: 86000, uncertainCount: 0 });
+  const negotiated = dashboard.records.find(row => row.category === 'negotiated');
+  assert.equal(negotiated.selectedPaidCents, 15000);
+  assert.equal(negotiated.selectedUnpaidCents, 45000);
+  assert.equal(negotiated.selectedPlans[0].paymentEvidence[0].sourceCell, 'P2');
+  const exported = await f.request(`/dashboard/export${query}`, { session: admin });
+  assert.equal(exported.status, 200);
+  const book = new ExcelJS.Workbook(); await book.xlsx.load(exported.bytes);
+  const monthly = book.getWorksheet('月度付款汇总');
+  assert.equal(valueByHeader(monthly, 11, '2026-11已付（元）'), 350);
+  assert.equal(valueByHeader(monthly, 11, '2026-11未付（元）'), 510);
+  assert.equal(valueByHeader(monthly, 11, '所选期间合计（元）'), 860);
+  const details = book.getWorksheet('筛选明细');
+  assert.equal(valueByHeader(details, 2, '选定范围已付（新规则）'), 150);
+  assert.match(valueByHeader(details, 2, '付款判定依据'), /P2.*150元.*11月5日核实-已支付/s);
+});
+
 test('完整 API 挂载的认证、CSRF、Origin 与 JSON 拒绝均在产生副作用前生效并记录', async t => {
   const f = await appFixture(t);
   assert.equal((await f.request('/health')).status, 200);
@@ -113,10 +145,12 @@ test('新三类付款和空金额通过预览激活、筛选及导出，重新�
   const exported = await f.request('/dashboard/export?from=2026-11&to=2026-11', { session: admin });
   assert.equal(exported.status, 200);
   const output = new ExcelJS.Workbook(); await output.xlsx.load(exported.bytes);
-  const monthly = output.getWorksheet('月度计划');
-  assert.equal(valueByHeader(monthly, 2, '谈判表-谈判付款'), 600);
-  assert.equal(valueByHeader(monthly, 2, '谈判表-正常付款'), 150);
-  assert.equal(valueByHeader(monthly, 2, '正常付款'), 200);
+  const monthly = output.getWorksheet('月度付款汇总');
+  assert.equal(valueByHeader(monthly, 3, '2026-11合计（元）'), 600);
+  assert.equal(valueByHeader(monthly, 5, '2026-11合计（元）'), 150);
+  assert.equal(valueByHeader(monthly, 6, '2026-11合计（元）'), 200);
+  assert.equal(valueByHeader(monthly, 4, '2026-11合计（元）'), 350);
+  assert.equal(valueByHeader(monthly, 11, '2026-11合计（元）'), 950);
   const details = output.getWorksheet('筛选明细');
   assert.deepEqual(details.getRows(2, 3).map(row => row.getCell(1).value), ['谈判表-谈判付款', '谈判表-正常付款', '正常付款']);
   assert.equal(valueByHeader(details, 3, '原台账累计已付'), 0);
@@ -258,9 +292,10 @@ test('筛选导出可重新读取，时间待定中文显示，无 Table/隐藏�
   assert.equal(incompleteResponse.status, 200);
   const incomplete = new ExcelJS.Workbook();
   await incomplete.xlsx.load(incompleteResponse.bytes);
-  const incompleteMonthly = incomplete.getWorksheet('月度计划');
-  for (const label of ['谈判表-谈判付款', '谈判表-正常付款', '正常付款', '售后配件预估', '已发货未登记台账预估']) assert.equal(valueByHeader(incompleteMonthly, 2, label), '未上传');
-  assert.equal(valueByHeader(incompleteMonthly, 2, '发货计划预估'), 0);
+  const incompleteMonthly = incomplete.getWorksheet('月度付款汇总');
+  for (const row of [2, 3, 5, 6, 9, 10]) assert.equal(valueByHeader(incompleteMonthly, row, '2026-11合计（元）'), '未上传');
+  assert.equal(valueByHeader(incompleteMonthly, 8, '2026-11合计（元）'), 0);
+  assert.match(valueByHeader(incompleteMonthly, 4, '数据状态'), /已上传部分/);
   const incompleteStats = Object.fromEntries(incomplete.getWorksheet('统计口径').getRows(2, incomplete.getWorksheet('统计口径').rowCount - 1)
     .map(row => [row.getCell(1).value, row.getCell(2).value]));
   for (const name of ['明确月份付款计划', '时间待定付款计划', '台账累计已付（已知）', '台账剩余金额（已知）',
@@ -274,14 +309,17 @@ test('筛选导出可重新读取，时间待定中文显示，无 Table/隐藏�
   assert.match(response.headers.get('content-type'), /spreadsheetml/);
   const workbook = new ExcelJS.Workbook();
   await workbook.xlsx.load(response.bytes);
-  assert.deepEqual(workbook.worksheets.map(sheet => sheet.name), ['月度计划', '筛选明细', '统计口径', '待核对']);
-  const monthly = workbook.getWorksheet('月度计划');
-  assert.equal(monthly.getCell('A2').value, '2026-11');
-  assert.equal(monthly.getCell('A3').value, '时间待定');
-  for (const label of ['谈判表-谈判付款', '谈判表-正常付款', '正常付款']) assert.equal(valueByHeader(monthly, 3, label), 0);
-  assert.equal(valueByHeader(monthly, 2, '发货计划预估'), 0);
-  assert.equal(valueByHeader(monthly, 3, '发货计划预估'), 30);
-  for (const label of ['售后配件预估', '已发货未登记台账预估']) for (const row of [2, 3]) assert.equal(valueByHeader(monthly, row, label), '未上传');
+  assert.deepEqual(workbook.worksheets.map(sheet => sheet.name), ['月度付款汇总', '筛选明细', '统计口径', '待核对']);
+  const monthly = workbook.getWorksheet('月度付款汇总');
+  assert.equal(monthly.rowCount, 11);
+  for (const row of [3, 5, 6]) assert.equal(valueByHeader(monthly, row, '时间待定合计（元）'), 0);
+  assert.equal(valueByHeader(monthly, 8, '2026-11合计（元）'), 0);
+  assert.equal(valueByHeader(monthly, 8, '时间待定未付（元）'), 30);
+  assert.equal(valueByHeader(monthly, 8, '所选期间合计（元）'), 0);
+  assert.equal(valueByHeader(monthly, 11, '2026-11已付（元）'), 200);
+  assert.equal(valueByHeader(monthly, 11, '2026-11未付（元）'), 600);
+  assert.equal(valueByHeader(monthly, 11, '所选期间合计（元）'), 800);
+  for (const row of [9, 10]) for (const month of ['2026-11', '时间待定']) assert.equal(valueByHeader(monthly, row, `${month}合计（元）`), '未上传');
   const details = workbook.getWorksheet('筛选明细');
   assert.equal(details.rowCount, 4);
   assert.equal(details.getCell('E2').value, 600);

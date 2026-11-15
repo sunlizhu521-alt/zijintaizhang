@@ -2,6 +2,7 @@ import ExcelJS from 'exceljs';
 import yauzl from 'yauzl';
 import { MAX_UPLOAD_BYTES, PARSER_VERSION, SLOTS } from '../shared/constants.js';
 import { findDuplicateIssues } from './dashboard.js';
+import { classifyPlanPayments, commentPaymentState, isArchived } from './payment-status.js';
 
 const MAX_EXPANDED_BYTES = 200 * 1024 * 1024;
 const MAX_RECORDS = 100000;
@@ -292,7 +293,7 @@ export async function parseWorkbook(buffer, { slotId, selectedSheets } = {}) {
           // 空白月份不凭空指定付款时间；显式零值和无缓存结果的公式保留为当月零元。
           if (!hasFormula && textOf(cell) === '') continue;
           const value = money(header.column);
-          if (value !== null) plans.push({ month: header.month, amountCents: value });
+          if (value !== null) plans.push({ month: header.month, amountCents: value, sourceCell: cell.address, sourceComment: noteOf(cell) });
         }
         if (!plans.length) {
           plans.push({ month: null, amountCents });
@@ -307,11 +308,26 @@ export async function parseWorkbook(buffer, { slotId, selectedSheets } = {}) {
       }
       const settled = getText(['是否结清']);
       const status = getText(['流程状态']);
+      const installments = [];
+      if (category === 'negotiated') {
+        for (const header of headers) {
+          if (!/^(?:\d{4}年)?\d{1,2}月\d{1,2}日$/.test(header.name)) continue;
+          const cell = row.getCell(header.column);
+          const comment = noteOf(cell);
+          const state = commentPaymentState(comment);
+          if (state === 'none') continue;
+          const value = money(header.column);
+          if (value === null) continue;
+          installments.push({ month: parseDate(header.name)?.month ?? null, amountCents: value, sourceCell: cell.address, comment, state });
+        }
+      }
+      classifyPlanPayments({ category, status, plans, installments, warn });
       const payer = textOf(row.getCell(payerCol));
       if (!payer) warn('MISSING_PAYER', '付款主体为空，请核对原表。');
       if (slotId === 'schedule') {
         if (paidCents !== null && remainingCents !== null && BigInt(paidCents) + BigInt(remainingCents) !== BigInt(amountCents)) warn('BALANCE_MISMATCH', '已付金额加剩余金额与申请金额不一致，请核对原表。');
-        if ((settled === '是' && remainingCents !== null && remainingCents !== 0) || (status === '归档' && remainingCents !== null && remainingCents > 0)) warn('STATUS_CONFLICT', '结清或流程状态与剩余金额存在矛盾；未据此改动已付金额。');
+        if ((settled === '是' && remainingCents !== null && remainingCents !== 0) || (category !== 'negotiated' && isArchived(status) && remainingCents !== null && remainingCents > 0)) warn('STATUS_CONFLICT', '结清或流程状态与原台账剩余金额存在矛盾；原台账已付和剩余值保留，新表已付按已确认的付款规则识别。');
+        if (paidCents !== null && plans.every(plan => plan.paidCents !== null) && plans.reduce((sum, plan) => sum + BigInt(plan.paidCents), 0n) !== BigInt(paidCents)) warn('RULE_PAID_MISMATCH', '按批注或归档规则识别的已付合计与原台账已付不同；原台账金额保留供核对，未用于推算各月付款。');
       }
       if (zeroedCells.length) warn('ZERO_DEFAULTED', `${zeroedCells.join('、')}：金额为空或公式没有已保存的计算结果，已按0保存。`);
       if ([amountCents, paidCents, remainingCents, ...plans.map(plan => plan.amountCents)].some(value => value !== null && value < 0)) warn('NEGATIVE_AMOUNT', '记录含负金额，已按原值保留，请确认是否为退款或冲减。');

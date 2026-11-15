@@ -1,5 +1,5 @@
 import ExcelJS from 'exceljs';
-import { CATEGORIES, LEDGER_CATEGORIES } from '../shared/constants.js';
+import { CATEGORIES } from '../shared/constants.js';
 
 function makeSheet(book, name, columns, rows) {
   const sheet = book.addWorksheet(name, { views: [{ state: 'frozen', ySplit: 1 }] });
@@ -24,17 +24,39 @@ export async function dashboardExport(data) {
   const book = new ExcelJS.Workbook(); book.creator = '资金台账';
   const uploaded = new Set(data.slots.filter(slot => slot.currentVersionId).map(slot => slot.id));
   const amount = (slotId, cents) => uploaded.has(slotId) ? (cents ?? 0) / 100 : '未上传';
-  makeSheet(book, '月度计划', [['月份', 'month'], ...Object.entries(CATEGORIES).map(([id, name]) => [name, id, 24])],
-    data.months.map(m => ({ month: !m.month || m.month === 'pending' ? '时间待定' : m.month,
-      ...Object.fromEntries(Object.keys(CATEGORIES).map(k => [k, amount(LEDGER_CATEGORIES.includes(k) ? 'schedule' : k, m[k])])) })));
+  const table = data.paymentTable;
+  const periods = [...table.months.map(month => [month, month === 'pending' ? '时间待定' : month]), ['period', '所选期间']];
+  const metrics = [['paidCents', '已付'], ['unpaidCents', '未付'], ['totalCents', '合计']];
+  const labels = Object.fromEntries(table.rows.map(row => [row.id, row.label]));
+  const monthly = makeSheet(book, '月度付款汇总', [['分类', 'label', 28], ['上级分类', 'parent', 24], ['数据状态', 'sourceStatus', 40],
+    ...periods.flatMap(([id, label]) => metrics.map(([key, title]) => [`${label}${title}（元）`, `${id}:${key}`, 22]))],
+  table.rows.map(row => ({ label: row.label, parent: labels[row.parentId] || '—',
+    sourceStatus: !row.available ? '未上传' : row.missingSources.length ? `已上传部分；缺少：${row.missingSources.join('、')}` : '完整',
+    ...Object.fromEntries(periods.flatMap(([id]) => metrics.map(([key]) => {
+      const value = (id === 'period' ? row.period : row.cells[id])[key];
+      return [`${id}:${key}`, !row.available ? '未上传' : value === null ? '待核对' : value / 100];
+    }))) })));
+  monthly.views = [{ state: 'frozen', xSplit: 1, ySplit: 1 }];
+  table.rows.forEach((item, index) => {
+    const row = monthly.getRow(index + 2);
+    row.getCell(1).alignment = { horizontal: 'left', vertical: 'middle', wrapText: true, indent: item.depth };
+    if (!item.parentId || item.id === 'forecast_group') row.eachCell(cell => {
+      cell.font = { ...cell.font, bold: true };
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: item.id === 'total' ? 'FFFBEADF' : 'FFF3F5F7' } };
+    });
+  });
   makeSheet(book, '筛选明细', [
     ['类别', 'category'], ['供应商', 'supplier', 34], ['付款主体', 'payer', 24], ['跟单员', 'owner'],
     ['选定期间计划金额', 'plan', 24], ['原台账申请金额', 'amount', 24], ['原台账累计已付', 'paid', 24], ['原台账剩余金额', 'remaining', 24],
     ['计划月份', 'months', 28], ['流程号', 'flowCode', 30], ['流程状态', 'status'], ['申请状态', 'applicationStatus'],
     ['摘要', 'summary', 40], ['备注', 'notes', 60], ['来源文件', 'filename', 45], ['工作表', 'sourceSheet'], ['原始行', 'sourceRow'],
+    ['选定范围已付（新规则）', 'selectedPaid', 26], ['选定范围未付（新规则）', 'selectedUnpaid', 26], ['付款判定依据', 'paymentBasis', 70],
   ], data.records.map(r => ({ ...r, category: CATEGORIES[r.category], plan: r.selectedPlanCents / 100,
     amount: r.amountCents / 100, paid: r.paidCents == null ? '未填写' : r.paidCents / 100,
     remaining: r.remainingCents == null ? '未填写' : r.remainingCents / 100,
+    selectedPaid: r.selectedPaidCents == null ? '待核对' : r.selectedPaidCents / 100,
+    selectedUnpaid: r.selectedUnpaidCents == null ? '待核对' : r.selectedUnpaidCents / 100,
+    paymentBasis: (r.selectedPlans || r.plans).map(p => `${p.month || '时间待定'}：${p.paymentBasis || '待核对'}${p.paymentEvidence?.length ? '\n' + p.paymentEvidence.map(e => `${e.sourceCell}（${e.amountCents == null ? '金额待核对' : e.amountCents / 100 + '元'}）：${e.comment}`).join('\n') : ''}`).join('\n'),
     months: [...new Set((r.selectedPlans || r.plans).map(p => p.month || '时间待定'))].join('、') })));
   makeSheet(book, '统计口径', [['项目', 'name', 26], ['金额或说明', 'value', 90]], [
     { name: '明确月份付款计划', value: amount('schedule', data.summary.planCents) },
@@ -49,7 +71,9 @@ export async function dashboardExport(data) {
     { name: '金额空值口径', value: '金额为空或公式没有已保存计算结果时按0计入；不重新计算公式。' },
     { name: '缺失已付记录数', value: uploaded.has('schedule') ? String(data.summary.missingPaidCount) : '未上传' },
     { name: '缺失剩余记录数', value: uploaded.has('schedule') ? String(data.summary.missingRemainingCount) : '未上传' },
-    { name: '预估与付款计划', value: '三类预估分别展示，可能与付款计划重复，未经核对不直接相加。' },
+    { name: '父子汇总', value: '谈判付款仅含谈判表-谈判付款；正常付款包含另两类付款及三类预估。预估合计是正常付款的子项，总合计只累加六个原始分类一次，父级和子级不可再次累加。' },
+    { name: '月内已付与未付', value: '谈判付款按具体分期金额格的日期及已付/已支付批注判定；谈判表-正常付款和正常付款按归档/已归档判定；三类预估全部未付。无已付批注的谈判分期全部未付，无法确定的情况显示待核对。' },
+    { name: '月份与期间合计', value: '月份沿用月支付列或应付时间，批注付款日期不迁移计划月份。所选期间合计排除时间待定；筛选明细保留单列的时间待定记录。金额以元导出，网页同时显示万元近似值。' },
   ]);
   makeSheet(book, '待核对', [['问题', 'message', 70], ['来源工作表', 'sourceSheet', 24], ['原始行', 'sourceRow'], ['类型', 'code', 28]], data.issues);
   return book.xlsx.writeBuffer();

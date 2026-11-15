@@ -36,20 +36,23 @@ function database(t) {
   return db;
 }
 
-function seedVersion(db, id, slotId, content, selectedSheets, current = true) {
-  const legacyRecords = slotId === 'schedule' ? [{ category: 'negotiated', paidCents: null }, { category: 'negotiated' }, { category: 'normal' }] : [{ category: slotId }];
+function seedVersion(db, id, slotId, content, selectedSheets, current = true, parserVersion = 1) {
+  const legacyRecords = slotId === 'schedule' ? [{ category: 'negotiated', paidCents: parserVersion === 1 ? null : 0 },
+    { category: parserVersion === 1 ? 'negotiated' : 'negotiated_normal' }, { category: 'normal' }] : [{ category: slotId }];
   db.prepare('INSERT INTO file_versions VALUES (?,?,?,?,?,?,?,?,?,?)').run(id, slotId, `${id}.xlsx`, content,
-    JSON.stringify({ records: legacyRecords, issues: [], parserVersion: 1 }), JSON.stringify(selectedSheets),
+    JSON.stringify({ records: legacyRecords, issues: [], parserVersion }), JSON.stringify(selectedSheets),
     '合成上传人', '2026-11-01T00:00:00.000Z', 99, 88);
   if (current) db.prepare('UPDATE file_slots SET current_version_id=?, revision=revision+1, updated_at=?, updated_by=? WHERE id=?')
     .run(id, '2026-11-01T00:00:00.000Z', '合成上传人', slotId);
 }
 
-test('启动建立独立解析缓存，原版可回退，新版历史/列表采用新规则且重启幂等', async t => {
+test('原始v2与历史派生v2缓存升级到v3，保留原文件并使恢复、审计及并发控制采用新规则', async t => {
   const db = database(t);
   const content = await scheduleBuffer();
   seedVersion(db, 'history', 'schedule', content, ['谈判付款', '正常付款'], false);
-  seedVersion(db, 'current', 'schedule', content, ['谈判付款', '正常付款']);
+  seedVersion(db, 'current', 'schedule', content, ['谈判付款', '正常付款'], true, 2);
+  const previousCache = db.prepare("SELECT parsed_json FROM file_versions WHERE id='current'").get().parsed_json;
+  db.prepare('INSERT INTO file_parse_cache VALUES (?,?,?,?,?)').run('history', 2, previousCache, 3, 0);
   // An explicitly selected backup sheet must stay selected after reparsing.
   seedVersion(db, 'forecast', 'shipment', await forecastBuffer(), ['合成人员-原始表']);
   const user = await initAdmin(db, { username: 'synthetic-admin', displayName: '合成管理员', password: 'Synthetic-migration-A1' });
@@ -62,7 +65,9 @@ test('启动建立独立解析缓存，原版可回退，新版历史/列表采�
   for (const previous of before) {
     const original = db.prepare('SELECT * FROM file_versions WHERE id=?').get(previous.id);
     assert.deepEqual(original, previous);
-    assert.ok(JSON.parse(original.parsed_json).records.every(record => record.category !== 'negotiated_normal'));
+    if (JSON.parse(original.parsed_json).parserVersion === 1) {
+      assert.ok(JSON.parse(original.parsed_json).records.every(record => record.category !== 'negotiated_normal'));
+    }
     const updated = db.prepare('SELECT * FROM file_parse_cache WHERE version_id=?').get(previous.id);
     const parsed = JSON.parse(updated.parsed_json);
     assert.equal(updated.parser_version, PARSER_VERSION);
@@ -82,6 +87,7 @@ test('启动建立独立解析缓存，原版可回退，新版历史/列表采�
       assert.equal(parsed.records[0].amountCents, 9900);
     }
   }
+  assert.notEqual(db.prepare("SELECT parsed_json FROM file_parse_cache WHERE version_id='history'").get().parsed_json, previousCache);
   assert.equal(listSlots(db).find(slot => slot.id === 'schedule').recordCount, 3);
   assert.equal(listSlots(db).find(slot => slot.id === 'shipment').recordCount, 1);
   assert.ok(listVersions(db, 'schedule').every(version => version.recordCount === 3));
@@ -91,6 +97,12 @@ test('启动建立独立解析缓存，原版可回退，新版历史/列表采�
     assert.equal(updated.revision, previous.revision + (['schedule', 'shipment'].includes(previous.id) ? 1 : 0));
   }
   assert.equal(auditCount(), 3);
+  const auditVersions = db.prepare("SELECT target,details_json FROM audit_logs WHERE action='更新文件解析规则'").all()
+    .map(log => ({ target: log.target, ...JSON.parse(log.details_json) }));
+  for (const log of auditVersions) {
+    assert.equal(log.previousParserVersion, log.target === 'forecast' ? 1 : 2);
+    assert.equal(log.parserVersion, PARSER_VERSION);
+  }
   const after = db.prepare('SELECT * FROM file_slots ORDER BY id').all();
   assert.equal(await refreshParsedVersions(db), 0);
   assert.equal(auditCount(), 3);
@@ -99,10 +111,20 @@ test('启动建立独立解析缓存，原版可回退，新版历史/列表采�
   const oldDraft = getDraft(db, draft.token, 'schedule', user.id);
   const parsed = JSON.parse(db.prepare("SELECT parsed_json FROM file_parse_cache WHERE version_id='current'").get().parsed_json);
   assert.throws(() => activateDraft(db, oldDraft, parsed, draft.baseRevision, { actor: user.username }), error => error.status === 409);
+  assert.throws(() => restoreVersion(db, 'schedule', 'history', draft.baseRevision, { actor: user.username }), error => error.status === 409);
   const revision = db.prepare("SELECT revision FROM file_slots WHERE id='schedule'").get().revision;
   restoreVersion(db, 'schedule', 'history', revision, { actor: user.username });
   assert.deepEqual(activeData(db).records.filter(record => record.slotId === 'schedule').map(record => record.category),
     ['negotiated', 'negotiated_normal', 'normal']);
+  assert.deepEqual(activeData(db).records.filter(record => record.slotId === 'schedule').map(record => record.plans),
+    versionDetails(db, 'schedule', 'history').records.map(record => record.plans));
+  assert.deepEqual(activeData(db).records.filter(record => record.slotId === 'schedule')
+    .flatMap(record => record.plans.map(({ month, amountCents, paidCents, unpaidCents }) => ({ month, amountCents, paidCents, unpaidCents }))), [
+    { month: '2026-11', amountCents: 10000, paidCents: 0, unpaidCents: 10000 },
+    { month: '2026-11', amountCents: 20000, paidCents: 0, unpaidCents: 20000 },
+    { month: '2026-11', amountCents: 30000, paidCents: 0, unpaidCents: 30000 },
+  ]);
+  assert.deepEqual(db.prepare('SELECT * FROM file_versions ORDER BY id').all(), before);
 });
 
 test('任一历史文件无法重解析时，所有缓存、槽位和审计保持不变', async t => {

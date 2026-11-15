@@ -48,7 +48,7 @@ test('日期支持 Excel 序号、1904 系统、文本、时间戳和跨年，�
   for (const invalid of ['11月', '/', '2026-02-30', '2026年13月', null]) assert.equal(parseDate(invalid), null);
 });
 
-test('付款节奏读取两张指定表，月计划不按申请日期归月，空已付记零但不推断归档为支付', async () => {
+test('付款节奏保留原台账空已付为零，新增月度已付按归档规则识别', async () => {
   const { workbook, negotiated } = scheduleBook();
   negotiated.getCell('N2').note = '11月核对备注';
   const parsed = await parseWorkbook(await asBuffer(workbook), { slotId: 'schedule' });
@@ -56,12 +56,38 @@ test('付款节奏读取两张指定表，月计划不按申请日期归月，�
   const first = parsed.records[0];
   assert.equal(first.key, 'schedule:谈判付款:2');
   assert.equal(first.amountCents, 123456);
-  assert.deepEqual(first.plans, [{ month: '2026-11', amountCents: 50000 }, { month: '2026-12', amountCents: 73456 }]);
+  assert.deepEqual(first.plans.map(({ month, amountCents }) => ({ month, amountCents })), [{ month: '2026-11', amountCents: 50000 }, { month: '2026-12', amountCents: 73456 }]);
   assert.equal(first.comments.N2, '11月核对备注');
   assert.equal(parsed.records[1].paidCents, 0);
   assert.equal(parsed.records[1].remainingCents, 100000);
+  assert.equal(parsed.records[1].plans[0].paidCents, 100000);
+  assert.equal(parsed.records[1].plans[0].unpaidCents, 0);
   assert.ok(!parsed.issues.some(issue => issue.code === 'MISSING_PAID'));
   assert.ok(parsed.issues.some(issue => issue.code === 'STATUS_CONFLICT'));
+});
+
+test('分期日期格的批注识别已付，备注格不计入，缺缓存分期金额按零保存并保留来源', async () => {
+  const { workbook, negotiated, normal } = scheduleBook();
+  negotiated.getCell('P1').value = '2026年11月2日';
+  negotiated.getCell('P2').value = 200;
+  negotiated.getCell('P2').note = { texts: [{ text: '11月5日核实-已支付' }, { text: '\n申请日期：2026年11月2日' }] };
+  negotiated.getCell('Q1').value = '2026年11月16日';
+  negotiated.getCell('Q2').value = 300;
+  negotiated.getCell('N2').note = '11月5日-已付';
+  negotiated.getCell('K2').value = '归档';
+  const parsed = await parseWorkbook(await asBuffer(workbook), { slotId: 'schedule' });
+  assert.equal(parsed.parserVersion, 3);
+  const record = parsed.records[0];
+  assert.deepEqual(record.plans.map(p => [p.month, p.amountCents, p.paidCents, p.unpaidCents]), [['2026-11', 50000, 20000, 30000], ['2026-12', 73456, 0, 73456]]);
+  assert.equal(record.plans[0].paymentEvidence[0].sourceCell, 'P2');
+  assert.equal(record.paidCents, 20000);
+  negotiated.getCell('P2').value = { formula: '100+100' };
+  normal.getCell('K2').value = '未归档';
+  const empty = await parseWorkbook(await asBuffer(workbook), { slotId: 'schedule' });
+  assert.equal(empty.records[0].plans[0].paidCents, 0);
+  assert.equal(empty.records[0].plans[0].unpaidCents, 50000);
+  assert.ok(empty.issues.some(issue => issue.code === 'ZERO_DEFAULTED' && issue.message.includes('P2')));
+  assert.equal(empty.records[1].plans[0].paidCents, 0);
 });
 
 test('预估默认排除原始和隐藏表，保留重复备注列，支持显式选表', async () => {
@@ -91,7 +117,7 @@ test('格式化到 XFD 的空单元格不会扩大字段，缺月份和负金额
   sheet.addRow(['', '合计', '', '', -1.23]);
   const parsed = await parseWorkbook(await asBuffer(workbook), { slotId: 'after_sales' });
   assert.equal(parsed.records.length, 1);
-  assert.deepEqual(parsed.records[0].plans, [{ month: null, amountCents: -123 }]);
+  assert.deepEqual(parsed.records[0].plans.map(({ month, amountCents }) => ({ month, amountCents })), [{ month: null, amountCents: -123 }]);
   assert.ok(parsed.issues.some(issue => issue.code === 'MISSING_MONTH'));
   assert.ok(parsed.issues.some(issue => issue.code === 'NEGATIVE_AMOUNT'));
 });
@@ -107,7 +133,7 @@ test('金额公式读取保存结果，空金额和无结果公式记零，非�
     const parsed = await parseWorkbook(await asBuffer(workbook), { slotId: 'shipment' });
     assert.equal(parsed.records.length, 1);
     assert.equal(parsed.records[0].amountCents, 0);
-    assert.deepEqual(parsed.records[0].plans, [{ month: '2026-11', amountCents: 0 }]);
+    assert.deepEqual(parsed.records[0].plans.map(({ month, amountCents }) => ({ month, amountCents })), [{ month: '2026-11', amountCents: 0 }]);
   }
   for (const value of ['一千', { formula: '1/0', result: { error: '#DIV/0!' } }]) {
     sheet.getCell('E2').value = value;
@@ -130,7 +156,7 @@ test('谈判表按是否谈判分批区分两类，否仍按月支付列取计�
   assert.equal(second.sourceSheet, '谈判付款');
   assert.equal(second.sourceRow, 3);
   assert.equal(second.dueDate, '2027-01-01');
-  assert.deepEqual(second.plans, [{ month: '2026-11', amountCents: 2000 }, { month: '2026-12', amountCents: 7000 }]);
+  assert.deepEqual(second.plans.map(({ month, amountCents }) => ({ month, amountCents })), [{ month: '2026-11', amountCents: 2000 }, { month: '2026-12', amountCents: 7000 }]);
 });
 
 test('谈判分类缺失、未知或缺表头时拒绝并定位，不默认为任一付款类别', async () => {
@@ -155,13 +181,13 @@ test('付款申请、已付、剩余的空值和无缓存公式保存为零，�
     assert.equal(record.paidCents, 0);
     assert.equal(record.remainingCents, 0);
   }
-  assert.deepEqual(parsed.records[0].plans, [{ month: '2026-11', amountCents: 0 }, { month: '2026-12', amountCents: 0 }]);
+  assert.deepEqual(parsed.records[0].plans.map(({ month, amountCents }) => ({ month, amountCents })), [{ month: '2026-11', amountCents: 0 }, { month: '2026-12', amountCents: 0 }]);
   assert.equal(parsed.records[0].raw['OA-申请付款金额'], null);
   negotiated.getCell('F2').value = 25;
   negotiated.getCell('L2').value = null;
   negotiated.getCell('M2').value = null;
   const pending = await parseWorkbook(await asBuffer(workbook), { slotId: 'schedule' });
-  assert.deepEqual(pending.records[0].plans, [{ month: null, amountCents: 2500 }]);
+  assert.deepEqual(pending.records[0].plans.map(({ month, amountCents }) => ({ month, amountCents })), [{ month: null, amountCents: 2500 }]);
 });
 
 test('缺必需表、空数据、不合法选表及损坏归档均失败', async () => {
