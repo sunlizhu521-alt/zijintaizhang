@@ -9,11 +9,11 @@ export const SLOTS = [
 export const ORDER_SLOT = { id: 'kingdee_orders', label: '金蝶采购订单' };
 export const ALL_SLOTS = [...SLOTS, ORDER_SLOT];
 export const CATEGORIES = {
-  negotiated: '谈判表-谈判付款', negotiated_normal: '谈判表-正常付款', normal: '正常付款', shipment: '发货计划预估',
+  negotiated: '谈判表-谈判付款', negotiated_normal: '谈判表-正常付款', normal: '正常付款-已对账', normal_unreconciled: '正常付款-未完成对账', shipment: '发货计划预估',
   after_sales: '售后配件预估', unregistered: '已发货未登记台账预估',
 };
-export const LEDGER_CATEGORIES = ['negotiated', 'negotiated_normal', 'normal'];
-export const PARSER_VERSION = 5;
+export const LEDGER_CATEGORIES = ['negotiated', 'negotiated_normal', 'normal', 'normal_unreconciled'];
+export const PARSER_VERSION = 6;
 export const PERMISSIONS = {
   dashboard: '查看资金看板', files: '查看文件管理', upload: '上传并替换文件',
   download: '下载原始文件', export: '导出查询结果', restore: '恢复历史版本',

@@ -305,6 +305,59 @@ test('进度金额错误定位到行列，空或无缓存金额为零，进度�
   }
 });
 
+test('正常付款按预估时间内容分类，空白已对账，公式无可用结果或异常日期保留未完成并提示', async () => {
+  const { workbook, normal } = scheduleBook();
+  normal.getCell('L1').value = '预估时间';
+  normal.getCell('M1').value = '是否对账';
+  const cases = [
+    [null, false, false], ['', false, false], ['  ', false, false],
+    [{ formula: '""', result: '' }, true, true], [{ formula: '" "', result: ' ' }, false, false],
+    ['2027年1月2日', true, false], [46327, true, false], [new Date('2026-12-01T00:00:00Z'), true, false],
+    [{ formula: 'DATE(2027,1,2)', result: 46389 }, true, false],
+    ['待定', true, true], ['2026年2月30日', true, true], ['11月', true, true],
+    [{ formula: 'DATE(2027,1,2)' }, true, true], [{ sharedFormula: 'L14' }, true, true],
+  ];
+  const original = normal.getRow(2).values.slice(1);
+  cases.forEach(([value, unreconciled], index) => {
+    const row = index + 2;
+    if (index) normal.addRow(original);
+    normal.getCell(`D${row}`).value = `MDST-DGFK20261101${String(index + 2).padStart(3, '0')}`;
+    normal.getCell(`L${row}`).value = value;
+    normal.getCell(`M${row}`).value = unreconciled ? '已' : '未';
+  });
+  const { records, issues } = await parseWorkbook(await asBuffer(workbook), { slotId: 'schedule' });
+  const normalRecords = records.filter(record => record.sourceSheet === '正常付款');
+  assert.equal(normalRecords.length, cases.length);
+  cases.forEach(([value, unreconciled, warning], index) => {
+    const record = normalRecords[index];
+    assert.equal(record.category, unreconciled ? 'normal_unreconciled' : 'normal', `第${index + 2}行`);
+    const expectedMonth = unreconciled ? (warning ? null : parseDate(value?.result ?? value).month) : '2026-11';
+    assert.equal(record.plans[0].month, expectedMonth);
+    assert.equal(record.amountCents, 100000);
+    assert.equal(issues.some(issue => issue.code === 'INVALID_ESTIMATED_DATE' && issue.sourceSheet === '正常付款' && issue.sourceRow === index + 2), warning);
+  });
+});
+
+test('预估时间分类仅作用正常付款sheet并优先确定月份，旧表无该字段仍按应付时间', async () => {
+  const { workbook, normal, negotiated } = scheduleBook();
+  const previous = await parseWorkbook(await asBuffer(workbook), { slotId: 'schedule' });
+  assert.equal(previous.records[1].category, 'normal');
+  assert.equal(previous.records[1].plans[0].month, '2026-11');
+  normal.getCell('L1').value = '预估时间';
+  normal.getCell('L2').value = '2027年1月2日';
+  normal.getCell('G2').value = null;
+  negotiated.getCell('P1').value = '预估时间';
+  negotiated.getCell('P2').value = '2027年1月2日';
+  const { records } = await parseWorkbook(await asBuffer(workbook), { slotId: 'schedule' });
+  assert.equal(records[0].category, 'negotiated');
+  assert.equal(records[1].category, 'normal_unreconciled');
+  assert.equal(records[1].plans[0].month, '2027-01');
+  assert.equal(records[1].raw['预估时间'], '2027年1月2日');
+  const forecast = new ExcelJS.Workbook();
+  forecastSheet(forecast, '正常付款', [['2026-11-01', '供应商甲', '主体', '预估', 50, '', '', '2027年1月2日']], [...forecastHeaders, '预估时间']);
+  assert.equal((await parseWorkbook(await asBuffer(forecast), { slotId: 'shipment' })).records[0].category, 'shipment');
+});
+
 test('实际付款样表基准：谈判表56条分批、70条非分批，正常表41条，总记录和计划金额保持', { skip: !process.env.SCHEDULE_SAMPLE }, async () => {
   const parsed = await parseWorkbook(await fs.readFile(process.env.SCHEDULE_SAMPLE), { slotId: 'schedule' });
   assert.equal(parsed.records.length, 167);
@@ -319,4 +372,18 @@ test('实际预估样表默认排除原始备份，不重复计入', { skip: !pr
   const parsed = await parseWorkbook(await fs.readFile(process.env.FORECAST_SAMPLE), { slotId: 'shipment' });
   assert.ok(!parsed.selectedSheets.includes('邢芳芳-原始表'));
   assert.ok(parsed.records.every(record => record.sourceSheet !== '邢芳芳-原始表'));
+});
+
+test('实际V4正常表82条按预估时间拆60条已对账和22条未完成，原记录与金额保留', { skip: !process.env.SCHEDULE_RECONCILIATION_SAMPLE }, async () => {
+  const parsed = await parseWorkbook(await fs.readFile(process.env.SCHEDULE_RECONCILIATION_SAMPLE), { slotId: 'schedule' });
+  const normal = parsed.records.filter(record => record.sourceSheet === '正常付款');
+  const pending = normal.filter(record => record.category === 'normal_unreconciled');
+  assert.equal(parsed.records.length, 208);
+  assert.equal(parsed.records.filter(record => record.sourceSheet === '谈判付款').length, 126);
+  assert.equal(normal.length, 82);
+  assert.equal(normal.filter(record => record.category === 'normal').length, 60);
+  assert.equal(pending.length, 22);
+  assert.ok(pending.every(record => record.plans[0].month === parseDate(record.raw['预估时间']).month));
+  assert.equal(pending.filter(record => record.raw['是否对账'] === '已对账').length, 2);
+  assert.ok(normal.every(record => record.amountCents === (parseMoney(record.raw['本次申请付款金额']) ?? 0)));
 });

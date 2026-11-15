@@ -266,6 +266,7 @@ export async function parseWorkbook(buffer, { slotId, selectedSheets, allowLegac
     const amountCol = columnOf(headers, sourceCategory === 'negotiated' ? ['OA-申请付款金额'] : sourceCategory === 'normal' ? ['本次申请付款金额'] : ['申请付款金额']);
     const payerCol = columnOf(headers, ['付款主体']);
     const dateCol = columnOf(headers, sourceCategory === 'normal' ? ['应付时间'] : sourceCategory === 'negotiated' ? ['应付款时间'] : ['预估付款月份']);
+    const estimatedCol = sourceCategory === 'normal' ? columnOf(headers, ['预估时间']) : undefined;
     const splitCol = columnOf(headers, ['是否谈判分批']);
     const paidCol = columnOf(headers, ['已付金额']);
     const remainingCol = columnOf(headers, ['剩余付款金额', '剩余金额']);
@@ -294,6 +295,11 @@ export async function parseWorkbook(buffer, { slotId, selectedSheets, allowLegac
       const location = { sourceSheet: sheetName, sourceRow: number, recordKey: key, slotId };
       const warn = (code, message) => issues.push({ ...location, code, severity: 'warning', message });
       const error = message => errors.push({ ...location, code: 'INVALID_ROW', message });
+      const estimatedCell = estimatedCol ? row.getCell(estimatedCol) : null;
+      const estimatedValue = valueOf(estimatedCell);
+      const estimatedFormula = estimatedCell?.value && typeof estimatedCell.value === 'object' && ('formula' in estimatedCell.value || 'sharedFormula' in estimatedCell.value);
+      const hasEstimatedTime = estimatedCell && (textOf(estimatedCell) !== '' || (estimatedFormula && estimatedValue === null));
+      const estimatedDate = hasEstimatedTime ? parseDate(estimatedValue, workbook.properties.date1904) : null;
       let category = sourceCategory;
       if (sourceCategory === 'negotiated') {
         const split = normalize(textOf(row.getCell(splitCol)));
@@ -302,6 +308,9 @@ export async function parseWorkbook(buffer, { slotId, selectedSheets, allowLegac
           return;
         }
         category = split === '是' ? 'negotiated' : 'negotiated_normal';
+      } else if (sourceCategory === 'normal' && hasEstimatedTime) {
+        category = 'normal_unreconciled';
+        if (!estimatedDate) warn('INVALID_ESTIMATED_DATE', `${estimatedCell.address}：${estimatedFormula && estimatedValue === null ? '公式未提供可用预估日期，请在Excel确认结果' : '“预估时间”没有可用的带年份日期，请核对日期格式'}；已保留为正常付款-未完成对账。`);
       }
       const zeroedCells = [];
       const money = column => {
@@ -320,7 +329,7 @@ export async function parseWorkbook(buffer, { slotId, selectedSheets, allowLegac
       if (!supplier || amountCents === null) return;
       const paidCents = slotId === 'schedule' ? money(paidCol) : null;
       const remainingCents = slotId === 'schedule' ? money(remainingCol) : null;
-      const date = parseDate(valueOf(row.getCell(dateCol)), workbook.properties.date1904);
+      const date = category === 'normal_unreconciled' ? estimatedDate : parseDate(valueOf(row.getCell(dateCol)), workbook.properties.date1904);
       const getText = names => {
         const column = columnOf(headers, names);
         return column ? textOf(row.getCell(column)) : '';

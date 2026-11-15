@@ -23,7 +23,7 @@ test('两类谈判付款均读取批注，正常与预估不因归档状态认�
     assert.equal(classify(category, [plan()], { status: '已归档' }).plans[0].paidCents, 0);
     assert.equal(classify(category, [plan()], { installments: [item(4000, '11月5日-已付')] }).plans[0].paidCents, 4000);
   }
-  for (const category of ['normal', 'shipment', 'after_sales', 'unregistered']) {
+  for (const category of ['normal', 'normal_unreconciled', 'shipment', 'after_sales', 'unregistered']) {
     const result = classify(category, [plan()], { status: '归档' });
     assert.equal(result.plans[0].paidCents, 0);
     assert.equal(result.plans[0].unpaidCents, 10000);
@@ -136,7 +136,7 @@ const progressRow = (extra = {}) => ({ sourceSheet: '付款进度整理', source
 const resolve = (record, rows, available = true) => resolveProgressPayments([record], { rows, available }, { id: 'v1', filename: '样例.xlsx' });
 
 test('正常付款与三类预估明确关联已付款，归档与申请时间不作为依据且不修改原对象', () => {
-  for (const category of ['normal', 'shipment', 'after_sales', 'unregistered']) {
+  for (const category of ['normal', 'normal_unreconciled', 'shipment', 'after_sales', 'unregistered']) {
     const original = progressRecord({ category, sourceSheet: category === 'normal' ? '正常付款' : '谈判付款', status: '未归档' });
     const result = resolve(original, [progressRow()]);
     const resolved = result.records[0].plans[0];
@@ -165,6 +165,17 @@ test('进度缺失、无有效流程号、未匹配及非已付款状态全计�
     assert.equal(result.records[0].plans[0].unpaidCents, 10000);
     assert.ok(result.issues.some(issue => issue.code === 'PAYMENT_PROGRESS_REVIEW'));
     assert.match(result.records[0].plans[0].paymentBasis, /计未付/);
+  }
+});
+
+test('未完成对账仍按付款进度判断已付，保留缺失依据与原台账差异提示', () => {
+  for (const category of ['normal', 'normal_unreconciled']) {
+    const paid = resolve(progressRecord({ category, paidCents: 0 }), [progressRow()]);
+    assert.equal(paid.records[0].plans[0].paidCents, 10000);
+    assert.ok(paid.issues.some(issue => issue.code === 'RULE_PAID_MISMATCH'));
+    const unmatched = resolve(progressRecord({ category }), []);
+    assert.equal(unmatched.records[0].plans[0].unpaidCents, 10000);
+    assert.ok(unmatched.issues.some(issue => issue.code === 'PAYMENT_PROGRESS_REVIEW'));
   }
 });
 

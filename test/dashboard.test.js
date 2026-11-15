@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { buildDashboard, findDuplicateIssues } from '../server/dashboard.js';
 
 function record(key, category, plans, extra = {}) {
-  return { key, slotId: ['normal', 'negotiated', 'negotiated_normal'].includes(category) ? 'schedule' : category,
+  return { key, slotId: ['normal', 'normal_unreconciled', 'negotiated', 'negotiated_normal'].includes(category) ? 'schedule' : category,
     sourceSheet: '样表', sourceRow: Number(key.replace(/\D/g, '')) || 2,
     category, supplier: '供应商甲', payer: '主体甲', owner: '跟单甲', amountCents: plans.reduce((sum, item) => sum + item.amountCents, 0),
     paidCents: null, remainingCents: null, flowCode: '', plans, ...extra };
@@ -64,6 +64,21 @@ test('未明确月份单列且不冒充当期计划，空与零的计数不同',
   assert.equal(result.summary.missingRemainingCount, 1);
   assert.equal(result.months.at(-1).month, 'pending');
   assert.equal(buildDashboard(records, [], [], { month: 'pending' }).records.length, 2);
+});
+
+test('未完成对账属于付款台账且可独立筛选，不进入三个预估槽位金额', () => {
+  const records = [record('r1', 'normal', [plan('2026-11', 200)]),
+    record('r2', 'normal_unreconciled', [plan('2026-11', 300), plan(null, 50)], { paidCents: 100, remainingCents: 250 }),
+    record('r3', 'shipment', [plan('2026-11', 90)])];
+  const data = buildDashboard(records, [], [], { category: 'normal_unreconciled', month: '2026-11' });
+  assert.equal(data.records.length, 1);
+  assert.equal(data.summary.planCents, 300);
+  assert.equal(data.summary.pendingPlanCents, 50);
+  assert.equal(data.summary.ledgerRecordCount, 1);
+  assert.equal(data.summary.paidCents, 100);
+  assert.deepEqual(data.summary.forecastCents, { shipment: 0, after_sales: 0, unregistered: 0 });
+  assert.equal(data.months[0].normal_unreconciled, 300);
+  assert.equal(data.months.at(-1).normal_unreconciled, 50);
 });
 
 test('供应商等条件影响计划和累计，空结果不会丢失筛选选项', () => {

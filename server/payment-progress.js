@@ -44,7 +44,7 @@ export function resolveProgressPayments(records, progress, sourceVersion = null)
     const plans = record.plans.map(plan => ({ ...plan, paidCents: paid ? plan.amountCents : 0,
       unpaidCents: paid ? 0 : plan.amountCents, paymentBasis: basis, paymentDates: [],
       paymentEvidence: evidence, paymentProgressVersion: sourceVersion ? { ...sourceVersion } : null }));
-    if (record.category === 'normal' && record.paidCents != null &&
+    if (['normal', 'normal_unreconciled'].includes(record.category) && record.paidCents != null &&
       plans.reduce((sum, plan) => sum + BigInt(plan.paidCents), 0n) !== BigInt(record.paidCents)) {
       warn('RULE_PAID_MISMATCH', '按付款进度整理识别的已付合计与原台账已付不同；原台账金额保留供核对，未用于推算各月付款。');
     }

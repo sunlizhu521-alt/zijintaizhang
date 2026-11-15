@@ -20,3 +20,4 @@ details>summary{cursor:pointer;color:#586574;font-size:12px;padding:3px 0}
 @media(max-width:620px){.payment-table .payment-category{width:126px}.payment-table th,.payment-table td{padding:10px 8px}.payment-table tbody th{font-size:12px}.payment-table .payment-month-group{font-size:12px}.payment-measure{grid-template-columns:1fr;gap:1px;padding:6px 0}.payment-measure-label{text-align:left}.payment-toggle{gap:3px}.payment-leaf{padding-left:15px}.payment-partial{padding-left:15px}.payment-panel .section-heading p{max-width:230px}.record-card,.plan-card{padding:13px}.dashboard-page table[aria-label="待核对事项"] th:first-child{width:95px}.dashboard-page .pagination{gap:8px;flex-wrap:wrap}}
 
 .order-file-grid{grid-template-columns:minmax(0,720px)}.order-file-grid .file-actions{flex-wrap:wrap}
+.category-normal_unreconciled{background:#e9f1fa;color:#416e9b}

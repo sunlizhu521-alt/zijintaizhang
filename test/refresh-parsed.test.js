@@ -231,3 +231,40 @@ test('四个资金槽位均刷新，独立采购订单原文件、缓存、槽�
   assert.equal(db.prepare("SELECT COUNT(*) AS n FROM audit_logs WHERE target='orders-old' OR target='kingdee_orders'").get().n, 0);
   assert.equal(await refreshParsedVersions(db), 0);
 });
+
+test('v5历史缓存按预估时间重分正常付款，原文件不变且分类和付款状态可追溯', async t => {
+  const db = database(t);
+  const book = new ExcelJS.Workbook();
+  await book.xlsx.load(await scheduleBuffer({ progress: true }));
+  const sheet = book.getWorksheet('正常付款');
+  sheet.getCell('H1').value = '预估时间';
+  sheet.getCell('H2').value = '2027年1月2日';
+  sheet.getCell('E2').value = null;
+  sheet.addRow(['另一合成供应商', '合成主体', '已对账', 50, '2026-12-01', 0, 50, null]);
+  const content = Buffer.from(await book.xlsx.writeBuffer());
+  const old = await parseWorkbook(content, { slotId: 'schedule' });
+  old.parserVersion = 5;
+  for (const record of old.records) if (record.category === 'normal_unreconciled') {
+    record.category = 'normal';
+    record.dueDate = null;
+    for (const plan of record.plans) plan.month = null;
+  }
+  seedVersion(db, 'reconciliation', 'schedule', content, old.selectedSheets, true, 4);
+  db.prepare('INSERT INTO file_parse_cache VALUES (?,?,?,?,?)')
+    .run('reconciliation', 5, JSON.stringify(old), old.records.length, old.issues.length);
+  const original = db.prepare("SELECT * FROM file_versions WHERE id='reconciliation'").get();
+  const originalPlans = old.records.map(record => record.plans);
+
+  assert.equal(await refreshParsedVersions(db), 1);
+  assert.equal(db.prepare("SELECT parser_version FROM file_parse_cache WHERE version_id='reconciliation'").get().parser_version, PARSER_VERSION);
+  const current = activeData(db).records;
+  assert.deepEqual(current.map(record => record.category), ['negotiated', 'negotiated_normal', 'normal_unreconciled', 'normal']);
+  assert.equal(originalPlans[2][0].month, null);
+  assert.equal(current[2].plans[0].month, '2027-01');
+  assert.equal(current[3].plans[0].month, '2026-12');
+  assert.deepEqual(current.map(record => record.plans.map(({ amountCents, paidCents, unpaidCents }) => ({ amountCents, paidCents, unpaidCents }))),
+    originalPlans.map(plans => plans.map(({ amountCents, paidCents, unpaidCents }) => ({ amountCents, paidCents, unpaidCents }))));
+  assert.deepEqual(versionDetails(db, 'schedule', 'reconciliation').records.map(record => record.category), current.map(record => record.category));
+  assert.deepEqual(db.prepare("SELECT * FROM file_versions WHERE id='reconciliation'").get(), original);
+  assert.equal(await refreshParsedVersions(db), 0);
+});
