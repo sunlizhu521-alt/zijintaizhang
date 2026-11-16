@@ -16,9 +16,11 @@
     "exceljs": "4.4.0",
     "express": "5.1.0",
     "helmet": "8.1.0",
+    "jszip": "3.10.1",
     "multer": "2.5.0",
     "react": "19.1.1",
     "react-dom": "19.1.1",
+    "saxes": "5.0.1",
     "yauzl": "3.4.0"
   },
   "devDependencies": {

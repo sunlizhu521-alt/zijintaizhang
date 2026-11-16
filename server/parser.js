@@ -4,6 +4,7 @@ import { ALL_SLOTS, MAX_UPLOAD_BYTES, ORDER_SLOT, PARSER_VERSION } from '../shar
 import { findDuplicateIssues } from './dashboard.js';
 import { classifyPlanPayments, commentPaymentState } from './payment-status.js';
 import { resolveProgressPayments } from './payment-progress.js';
+import { normalizeWorksheetParts } from './xlsx-compat.js';
 
 const MAX_EXPANDED_BYTES = 200 * 1024 * 1024;
 const MAX_RECORDS = 100000;
@@ -76,8 +77,8 @@ async function loadWorkbook(buffer, slotId) {
   if (!SLOT_IDS.has(slotId)) throw invalid('文件槽位不存在。');
   await checkArchive(buffer);
   const workbook = new ExcelJS.Workbook();
-  try { await workbook.xlsx.load(buffer); }
-  catch { throw invalid('无法读取 Excel，请用 Excel 或 WPS 重新保存为 .xlsx 后上传。'); }
+  try { await workbook.xlsx.load(await normalizeWorksheetParts(buffer)); }
+  catch (error) { throw error.status === 422 ? error : invalid('无法读取 Excel，请用 Excel 或 WPS 重新保存为 .xlsx 后上传。'); }
   return workbook;
 }
 
@@ -191,7 +192,7 @@ function sheetMetadata(workbook, slotId) {
       if (number > rowNumber && textOf(row.getCell(supplier)) && !/^(合计|总计|小计|汇总)$/.test(textOf(row.getCell(supplier)))) count++;
     });
     return { name: sheet.name, eligible, defaultSelected: eligible && (isSchedule || (!backup && sheet.state === 'visible')),
-      reason: !eligible ? (isSchedule ? '不属于付款节奏的指定工作表，或缺少表头。' : '缺少预估模板必需表头。') : isProgress ? '仅提供付款状态依据，不增加业务记录或汇总金额。' : backup ? '原始、备份或汇总工作表，默认不计入。' : sheet.state !== 'visible' ? '隐藏工作表，默认不计入。' : '', recordCount: isProgress ? 0 : count,
+      reason: !eligible ? (isSchedule ? (!expected && !isProgress ? '辅助工作表，不计入付款记录。' : '未识别到必需表头，请检查原表。') : '缺少预估模板必需表头。') : isProgress ? '仅提供付款状态依据，不增加业务记录或汇总金额。' : backup ? '原始、备份或汇总工作表，默认不计入。' : sheet.state !== 'visible' ? '隐藏工作表，默认不计入。' : '', recordCount: isProgress ? 0 : count,
       ...(isProgress ? { kind: 'reference', referenceCount: count } : {}) };
   });
 }
@@ -254,7 +255,12 @@ export async function parseWorkbook(buffer, { slotId, selectedSheets, allowLegac
   if (!selected.length) throw invalid('请选择至少一张符合格式的工作表。');
   for (const name of selected) {
     const metadata = sheets.find(sheet => sheet.name === name);
-    if (!metadata?.eligible) throw invalid(`工作表“${name}”不存在或缺少必需表头。`, [{ code: 'INVALID_SHEET', sourceSheet: name, sourceRow: 1, message: '工作表不存在或缺少必需表头。' }]);
+    if (!metadata?.eligible) {
+      const message = !metadata ? `工作表“${name}”不存在。` : slotId === 'schedule'
+        ? `工作表“${name}”已找到，但前 10 行未识别到“供应商”或“供应商名称”表头。`
+        : `工作表“${name}”已找到，但缺少预估模板必需表头。`;
+      throw invalid(message, [{ code: 'INVALID_SHEET', sourceSheet: name, sourceRow: 1, message }]);
+    }
   }
   const records = [], issues = [], errors = [];
   const paymentProgress = slotId === 'schedule' ? readPaymentProgress(workbook, allowLegacyProgress, issues) : undefined;
