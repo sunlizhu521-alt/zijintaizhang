@@ -23,7 +23,7 @@ function makeSheet(book, name, columns, rows) {
 export async function dashboardExport(data) {
   const book = new ExcelJS.Workbook(); book.creator = '资金台账';
   const amount = cents => cents == null ? '待核对' : cents / 100;
-  const metrics = [['totalCents', '合计'], ['paidCents', '已付'], ['unpaidCents', '未付']];
+  const metrics = [['totalCents', '合计'], ['paidCents', '已付'], ['unpaidCents', '未付'], ['unappliedUnpaidCents', '未提交申请单金额']];
   for (const [name, table, includePeriod] of [
     ['月度付款汇总', data.paymentTable, true], ['时间待定付款汇总', data.pendingPaymentTable, false],
   ]) {

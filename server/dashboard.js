@@ -1,5 +1,5 @@
 import { CATEGORIES, LEDGER_CATEGORIES } from '../shared/constants.js';
-import { buildPaymentTable, paymentPlanTotals } from './payment-table.js';
+import { buildPaymentTable, paymentPlanTotals, paymentTableTotals } from './payment-table.js';
 import { describeReviewIssue } from './review-issues.js';
 
 const MONTH = /^\d{4}-(0[1-9]|1[0-2])$/;
@@ -107,13 +107,16 @@ function applicationOf(record) {
 }
 
 function scopedRecord(record, plans) {
-  const totals = paymentPlanTotals(plans);
   const application = applicationOf(record);
-  const applicationUnknown = application.applicationState === 'review' && totals.unpaidCents !== 0;
-  return { ...record, ...application, selectedPlans: plans, selectedPlanCents: totals.totalCents,
+  const selectedPlans = plans.map(plan => ({ ...plan, unappliedUnpaidCents:
+    application.applicationState === 'review' && plan.unpaidCents !== 0 ? null
+      : application.applicationState === 'unapplied' ? plan.unpaidCents : 0 }));
+  const totals = paymentTableTotals(selectedPlans);
+  const applicationUnknown = application.applicationState === 'review' && totals.unappliedUnpaidCents === null;
+  return { ...record, ...application, selectedPlans, selectedPlanCents: totals.totalCents,
     selectedPaidCents: totals.paidCents, selectedUnpaidCents: totals.unpaidCents,
     selectedAppliedUnpaidCents: applicationUnknown ? null : application.applicationState === 'applied' ? totals.unpaidCents : 0,
-    selectedUnappliedUnpaidCents: applicationUnknown ? null : application.applicationState === 'unapplied' ? totals.unpaidCents : 0 };
+    selectedUnappliedUnpaidCents: totals.unappliedUnpaidCents };
 }
 
 function supplierGroups(records) {
@@ -148,13 +151,12 @@ export function buildDashboard(records, issues = [], slots = [], filters = {}) {
   const pendingRecords = pending ? selectedRecords : select(month => month === null);
   const plans = selectedRecords.flatMap(record => record.selectedPlans);
   const totals = paymentPlanTotals(plans);
-  const applicationReviewRecords = selectedRecords.filter(record => record.applicationState === 'review' && record.selectedUnpaidCents !== 0);
+  const applicationReviewRecords = selectedRecords.filter(record => record.applicationState === 'review' && record.selectedUnappliedUnpaidCents === null);
   const appliedPlans = selectedRecords.filter(record => record.applicationState === 'applied').flatMap(record => record.selectedPlans);
-  const unappliedPlans = selectedRecords.filter(record => record.applicationState === 'unapplied').flatMap(record => record.selectedPlans);
   const summary = {
     planCents: totals.totalCents, paidCents: totals.paidCents, remainingCents: totals.unpaidCents,
     appliedUnpaidCents: applicationReviewRecords.length ? null : paymentPlanTotals(appliedPlans).unpaidCents,
-    unappliedUnpaidCents: applicationReviewRecords.length ? null : paymentPlanTotals(unappliedPlans).unpaidCents,
+    unappliedUnpaidCents: paymentTableTotals(plans).unappliedUnpaidCents,
     applicationReviewCount: applicationReviewRecords.length,
     applicationReviewCents: paymentPlanTotals(applicationReviewRecords.flatMap(record => record.selectedPlans)).unpaidCents,
     uncertainCount: totals.uncertainCount,

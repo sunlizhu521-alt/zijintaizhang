@@ -31,7 +31,7 @@ test('分期批注经上传持久化、父子汇总及导出后已付未付一�
   const query = '?from=2026-11&to=2026-11';
   const dashboard = (await f.request(`/dashboard${query}`, { session: admin })).data;
   const total = dashboard.paymentTable.rows.find(row => row.id === 'total');
-  assert.deepEqual(total.cells['2026-11'], { paidCents: 35000, unpaidCents: 51000, totalCents: 86000, uncertainCount: 0 });
+  assert.deepEqual(total.cells['2026-11'], { paidCents: 35000, unpaidCents: 51000, totalCents: 86000, uncertainCount: 0, unappliedUnpaidCents: 6000 });
   const negotiated = dashboard.records.find(row => row.category === 'negotiated');
   assert.equal(negotiated.selectedPaidCents, 15000);
   assert.equal(negotiated.selectedUnpaidCents, 45000);
@@ -43,6 +43,8 @@ test('分期批注经上传持久化、父子汇总及导出后已付未付一�
   assert.equal(valueByHeader(monthly, rowByLabel(monthly, '总合计'), '2026-11已付（元）'), 350);
   assert.equal(valueByHeader(monthly, rowByLabel(monthly, '总合计'), '2026-11未付（元）'), 510);
   assert.equal(valueByHeader(monthly, rowByLabel(monthly, '总合计'), '所选期间合计（元）'), 860);
+  assert.equal(valueByHeader(monthly, rowByLabel(monthly, '总合计'), '2026-11未提交申请单金额（元）'), 60);
+  assert.equal(valueByHeader(monthly, rowByLabel(monthly, '总合计'), '所选期间未提交申请单金额（元）'), dashboard.summary.unappliedUnpaidCents / 100);
   const details = book.getWorksheet('筛选明细');
   assert.equal(valueByHeader(details, 2, '选定范围已付（新规则）'), 150);
   assert.match(valueByHeader(details, 2, '付款判定依据'), /P2.*150元.*11月5日核实-已支付/s);
@@ -88,7 +90,7 @@ test('正常付款预估日期经上传归月，六项子类含预估、下钻�
   assert.equal(normal.label, '正常付款');
   assert.deepEqual(normal.categories, ['negotiated_normal', 'normal', 'normal_unreconciled', 'shipment', 'after_sales', 'unregistered']);
   assert.equal(normal.cells['2026-11'].totalCents, 5000);
-  assert.deepEqual(normal.cells['2027-01'], { paidCents: 20000, unpaidCents: 0, totalCents: 20000, uncertainCount: 0 });
+  assert.deepEqual(normal.cells['2027-01'], { paidCents: 20000, unpaidCents: 0, totalCents: 20000, uncertainCount: 0, unappliedUnpaidCents: 0 });
   assert.equal(data.pendingPaymentTable.rows.find(row => row.id === 'normal_group').cells.pending.unpaidCents, 30000);
   const forecast = data.paymentTable.rows.find(row => row.id === 'shipment');
   assert.equal(forecast.parentId, 'normal_group');
@@ -109,6 +111,7 @@ test('正常付款预估日期经上传归月，六项子类含预估、下钻�
   assert.equal(valueByHeader(monthly, rowByLabel(monthly, '总合计'), '所选期间合计（元）'), 1250);
   const pending = output.getWorksheet('时间待定付款汇总');
   assert.equal(valueByHeader(pending, rowByLabel(pending, '正常付款-未完成对账'), '时间待定未付（元）'), 300);
+  assert.equal(valueByHeader(pending, rowByLabel(pending, '正常付款-未完成对账'), '时间待定未提交申请单金额（元）'), 0);
   assert.equal(data.records.length, 3);
   assert.equal(data.pendingRecords.length, 1);
   assert.equal(output.getWorksheet('筛选明细').rowCount, 4);

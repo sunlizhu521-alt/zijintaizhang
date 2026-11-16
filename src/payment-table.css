@@ -19,6 +19,7 @@
 .payment-summary-table .ps-totalCents{color:#1f2a37}
 .payment-summary-table .ps-paidCents{color:#218a70}
 .payment-summary-table .ps-unpaidCents{color:#487ecc}
+.payment-summary-table .ps-unappliedUnpaidCents{color:#a16207}
 .payment-panel .payment-summary-table tfoot th,.payment-panel .payment-summary-table tfoot td{background:#e6f8fa;font-weight:700;border-top:2px solid #b9e5ea;border-bottom:0}
 .payment-panel .payment-summary-table tr>*:last-child{border-right:0}
 @media(max-width:620px){.payment-panel .payment-summary-table th,.payment-panel .payment-summary-table td{padding:7px 6px}.payment-panel .section-heading{gap:10px}.payment-panel .section-heading p{font-size:10px}}

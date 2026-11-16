@@ -4,11 +4,12 @@ import { Empty, Modal } from './components.jsx';
 import PaymentDetails from './PaymentDetails.jsx';
 import './payment-table.css';
 
-const measures = [['totalCents', '总金额'], ['paidCents', '已支付金额'], ['unpaidCents', '未支付金额']];
+const measures = [['totalCents', '总金额'], ['paidCents', '已支付金额'], ['unpaidCents', '未支付金额'], ['unappliedUnpaidCents', '未提交申请单金额']];
 
 function detailRecords(records, selection) {
   if (!selection) return [];
   return records.filter(record => selection.categories.includes(record.category)).flatMap(record => {
+    if (selection.measure === 'unappliedUnpaidCents' && record.applicationState === 'applied') return [];
     const plans = (record.selectedPlans || record.plans || []).filter(plan =>
       (selection.month === 'period' ? Boolean(plan.month) : (plan.month || 'pending') === selection.month) &&
       (selection.measure === 'totalCents' || plan.amountCents === 0 || plan[selection.measure] == null || plan[selection.measure] !== 0));
@@ -37,7 +38,7 @@ export default function PaymentTable({ table, records = [], pending = false }) {
     return columns.flatMap(month => measures.map(([key, label], index) => {
       const cell = month === 'period' ? row.period : row.cells[month];
       return <td key={`${month}-${key}`} className={`ps-${key}${index === 0 ? ' ps-month-start' : ''}${month === 'period' ? ' ps-period' : ''}`}>
-        {!row.available ? <span className="ps-unavailable">未上传</span> : <button className="ps-amount" aria-label={`${row.label} ${monthLabel(month)} ${label} 查看明细`} title={cell?.[key] == null ? `${cell?.uncertainCount || 0} 笔计划待核对` : undefined} onClick={() => setSelection({ categories: row.categories, month, measure: key, title: `${row.label} · ${monthLabel(month)} · ${label}` })}>
+        {!row.available ? <span className="ps-unavailable">未上传</span> : <button className="ps-amount" aria-label={`${row.label} ${monthLabel(month)} ${label} 查看明细`} title={cell?.[key] == null ? `${label}待核对，点击查看对应记录` : undefined} onClick={() => setSelection({ categories: row.categories, month, measure: key, title: `${row.label} · ${monthLabel(month)} · ${label}` })}>
           {cell?.[key] == null ? '待核对' : moneyInWan(cell[key])}
         </button>}
       </td>;
@@ -49,10 +50,10 @@ export default function PaymentTable({ table, records = [], pending = false }) {
       {hasRecords && <button className="text-button" aria-expanded={expanded} aria-label={expanded ? '收起付款分类' : '展开付款分类'} onClick={() => setExpanded(value => !value)}>{expanded ? '收起' : '查看'}</button>}
     </div>
     {!hasRecords ? <Empty title={pending ? '暂无时间待定记录' : '当前区间暂无计划'} /> : <div className="payment-summary-scroll" tabIndex={0} role="region" aria-label={`${title}表格，可横向滚动`}>
-      <table className={`payment-summary-table${expanded ? ' ps-expanded' : ''}`} style={{ minWidth: `${(expanded ? 302 : 164) + columns.length * 3 * 96}px` }} aria-label={pending ? '时间待定付款父子汇总表' : '月度付款父子汇总表'}>
+      <table className={`payment-summary-table${expanded ? ' ps-expanded' : ''}`} style={{ minWidth: `${(expanded ? 302 : 164) + columns.length * measures.length * 96}px` }} aria-label={pending ? '时间待定付款父子汇总表' : '月度付款父子汇总表'}>
         <colgroup><col style={{ width: expanded ? '118px' : '164px' }} />{expanded && <col style={{ width: '184px' }} />}{columns.flatMap(month => measures.map(([key]) => <col key={`${month}-${key}`} />))}</colgroup>
-        <thead><tr><th rowSpan={2} colSpan={expanded ? 2 : 1} className="ps-category ps-category-heading" scope="col">分类</th>{columns.map(month => <th colSpan={3} scope="colgroup" className={`ps-month-start${month === 'period' ? ' ps-period' : ''}`} key={month}>{monthLabel(month)}</th>)}</tr>
-          <tr>{columns.flatMap(month => measures.map(([key, label], index) => <th key={`${month}-${key}`} scope="col" className={`ps-${key}${index === 0 ? ' ps-month-start' : ''}${month === 'period' ? ' ps-period' : ''}`}>{label}</th>))}</tr>
+        <thead><tr><th rowSpan={2} colSpan={expanded ? 2 : 1} className="ps-category ps-category-heading" scope="col">分类</th>{columns.map(month => <th colSpan={measures.length} scope="colgroup" className={`ps-month-start${month === 'period' ? ' ps-period' : ''}`} key={month}>{monthLabel(month)}</th>)}</tr>
+          <tr>{columns.flatMap(month => measures.map(([key, label], index) => <th key={`${month}-${key}`} scope="col" title={key === 'unappliedUnpaidCents' ? '未支付金额中，尚未确认提交申请单的部分' : undefined} className={`ps-${key}${index === 0 ? ' ps-month-start' : ''}${month === 'period' ? ' ps-period' : ''}`}>{label}</th>))}</tr>
         </thead>
         {parents.map(parent => {
           const children = expanded ? rows.filter(row => row.parentId === parent.id) : [];

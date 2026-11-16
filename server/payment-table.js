@@ -38,6 +38,15 @@ export function paymentPlanTotals(plans) {
   return result;
 }
 
+export function paymentTableTotals(plans) {
+  let unappliedUnpaidCents = 0;
+  for (const plan of plans) {
+    if (plan.unappliedUnpaidCents == null) unappliedUnpaidCents = null;
+    else if (unappliedUnpaidCents !== null) unappliedUnpaidCents = add(unappliedUnpaidCents, plan.unappliedUnpaidCents);
+  }
+  return { ...paymentPlanTotals(plans), unappliedUnpaidCents };
+}
+
 export function buildPaymentTable(records, months, slots) {
   const uploaded = new Set(slots.filter(slot => slot.currentVersionId).map(slot => slot.id));
   const slotNames = Object.fromEntries(SLOTS.map(slot => [slot.id, slot.label]));
@@ -54,7 +63,7 @@ export function buildPaymentTable(records, months, slots) {
     }
     return { ...row, available: sourceSlots.some(slot => uploaded.has(slot)),
       missingSources: sourceSlots.filter(slot => !uploaded.has(slot)).map(slot => slotNames[slot]),
-      cells: Object.fromEntries(months.map(month => [month, paymentPlanTotals(monthly[month])])),
-      period: paymentPlanTotals(dated) };
+      cells: Object.fromEntries(months.map(month => [month, paymentTableTotals(monthly[month])])),
+      period: paymentTableTotals(dated) };
   }) };
 }

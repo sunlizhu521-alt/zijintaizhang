@@ -1,12 +1,12 @@
 import { Fragment, useEffect, useMemo, useState } from 'react';
 import { CATEGORIES } from '../shared/constants.js';
-import { paymentPlanTotals } from '../server/payment-table.js';
+import { paymentTableTotals } from '../server/payment-table.js';
 import { Empty, Pager } from './components.jsx';
 import { moneyInWan, monthText } from './format.js';
 import { supplierRecordDetails } from './supplier-data.js';
 import './payment-details.css';
 
-const measures = [['totalCents', '总金额'], ['paidCents', '已付'], ['unpaidCents', '未付']];
+const measures = [['totalCents', '总金额'], ['paidCents', '已付'], ['unpaidCents', '未付'], ['unappliedUnpaidCents', '未提交申请单金额']];
 const display = value => value == null || value === '' ? '—' : (typeof value === 'object' ? JSON.stringify(value) : String(value)).replace(/(\d{4}-\d{2}-\d{2})T00:00:00(?:\.000)?Z/g, '$1');
 function Amount({ value }) {
   return <span className={value == null ? 'pd-uncertain' : 'pd-amount'}>{moneyInWan(value)}</span>;
@@ -21,7 +21,7 @@ function Evidence({ record, plan }) {
       ['供应商 / 付款主体', `${record.supplier || '—'} / ${record.payer || '—'}`],
       ['类别 / 跟单员', `${CATEGORIES[record.category] || '—'} / ${record.owner || '—'}`],
       ['摘要', record.summary], ['谈判明细', supplierRecordDetails(record).negotiation],
-      ['付款 OA 号', record.flowCode], ['付款申请状态', record.applicationStatus], ['流程状态', record.status],
+      ['付款 OA 号', record.flowCode], ['付款申请状态', record.applicationStatus], ['申请判定依据', record.applicationBasis], ['流程状态', record.status],
       ['当前节点', record.currentNode || record.raw?.['当前节点']],
       ['来源文件', record.filename], ['原表位置', `${record.sourceSheet} · 第 ${record.sourceRow} 行${plan.sourceCell ? ` · ${plan.sourceCell}` : ''}`],
       ['备注', record.notes],
@@ -44,7 +44,7 @@ export default function PaymentDetails({ records = [], measure = 'totalCents' })
   const [page, setPage] = useState(1);
   const [expanded, setExpanded] = useState(null);
   const rows = useMemo(() => records.flatMap((record, recordIndex) => (record.selectedPlans ?? record.plans ?? []).map((plan, planIndex) => ({ record, plan, id: `${recordIndex}-${planIndex}` }))), [records]);
-  const totals = useMemo(() => paymentPlanTotals(rows.map(row => row.plan)), [rows]);
+  const totals = useMemo(() => paymentTableTotals(rows.map(row => row.plan)), [rows]);
   useEffect(() => { setPage(1); setExpanded(null); }, [records, measure]);
   const selectedLabel = measures.find(([key]) => key === measure)?.[1] || '总金额';
   const amountClass = key => `pd-money${measure === key ? ' pd-selected' : ''}`;
@@ -64,7 +64,7 @@ export default function PaymentDetails({ records = [], measure = 'totalCents' })
           {measures.map(([key]) => <td key={key} className={amountClass(key)}><Amount value={row.plan[key === 'totalCents' ? 'amountCents' : key]} /></td>)}
           <td>{detailButton(row)}</td>
         </tr>
-        {expanded === row.id && <tr className="pd-evidence-row"><td colSpan={10}><Evidence record={row.record} plan={row.plan} /></td></tr>}
+        {expanded === row.id && <tr className="pd-evidence-row"><td colSpan={7 + measures.length}><Evidence record={row.record} plan={row.plan} /></td></tr>}
       </Fragment>)}</tbody>
       <tfoot><tr><th colSpan={6} scope="row">全部合计（{rows.length} 笔）</th>{measures.map(([key]) => <td key={key} className={amountClass(key)}><Amount value={totals[key]} /></td>)}<td /></tr></tfoot>
     </table></div>
