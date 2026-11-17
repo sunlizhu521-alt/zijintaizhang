@@ -1,14 +1,16 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { api, download } from './api.js';
 
-export default function FulfillmentImport({ month, bundle, perform, busy, error }) {
+export default function FulfillmentImport({ month, bundle, perform, busy, error, onPrepareMonth }) {
   const [preview, setPreview] = useState(null), [sheets, setSheets] = useState({}), [suppliers, setSuppliers] = useState({});
-  const dialog = useRef();
+  const dialog = useRef(), fileInput = useRef();
   useEffect(() => { if (preview) dialog.current.showModal(); }, [preview?.id]);
   const file = bundle?.assignmentImport, summary = file?.summary ? JSON.parse(file.summary) : null;
   const writable = bundle?.month.status === 'open';
+  const prepareAction = bundle?.month.status === 'paused' ? '恢复评分' : bundle?.month.status === 'closed' ? '重开月份' : '开启月份';
+  const monthStatus = bundle?.month.status === 'paused' ? '临时关闭' : bundle?.month.status === 'closed' ? '已结月' : '尚未开启';
   async function upload(e) {
-    const file = e.target.files[0]; e.target.value = ''; if (!file) return;
+    const file = e.target.files[0]; e.target.value = ''; if (!file || busy || !writable) return;
     const body = new FormData(); body.append('file', file);
     const result = await perform(() => api(`/months/${month}/assignment-import/preview`, { method: 'POST', body }), '已读取履约表，请核对工作表、账号和供应商对应关系');
     if (!result) return;
@@ -25,9 +27,9 @@ export default function FulfillmentImport({ month, bundle, perform, busy, error 
     if (await perform(() => api(`/months/${month}/assignment-import/commit`, { method: 'POST', body }), `${month} 履约表分配已完成，已有评分和人工分配保留`)) setPreview(null);
   }
   return <section className="panel">
-    <div className="section-heading"><div><h2>采购履约表 · 按工作表分配</h2><p className="muted">以工作表命名人对应评价账号，只读取供应商名称；不使用采购下单人、创建人或下单月份。</p></div><label className="file-button">{file ? '上传更新文件' : '上传采购履约表'}<input type="file" aria-label="上传采购履约表" accept=".xlsx" disabled={busy || !writable} onChange={upload} /></label></div>
+    <div className="section-heading"><div><h2>采购履约表 · 按工作表分配</h2><p className="muted">以工作表命名人对应评价账号，只读取供应商名称；不使用采购下单人、创建人或下单月份。</p></div><button type="button" className="primary" disabled={busy} aria-describedby={!writable ? 'fulfillment-upload-status' : undefined} onClick={() => writable ? fileInput.current.click() : onPrepareMonth()}>{busy ? '正在处理…' : writable ? file ? '上传更新文件' : '上传采购履约表' : `${prepareAction}后上传`}</button><input ref={fileInput} hidden type="file" aria-label="选择采购履约表文件" accept=".xlsx" disabled={busy || !writable} onChange={upload} /></div>
     <p>同一供应商在多人工作表出现时，追加多位评价人。已有分配和评分保留，未匹配账号或供应商需在预览中确认。</p>
-    {!writable && <p className="muted">请先开启所选月份；临时关闭或已结月时，请恢复或重开后再导入。</p>}
+    {!writable && <p id="fulfillment-upload-status" className="notice" role="status">{month} {monthStatus}，暂不能上传。点击“{prepareAction}后上传”可前往下方评价安排，完成{prepareAction}后再选择文件。</p>}
     {file ? <div className="actions"><div><strong>{file.filename}</strong><p className="muted">{new Intl.DateTimeFormat('sv-SE', { timeZone: 'Asia/Shanghai' }).format(new Date(file.created_at))} · {summary?.sheets}张工作表 · {summary?.suppliers}家供应商 · 追加{summary?.addedRaters}个人员分配</p></div><button disabled={busy} onClick={() => perform(() => download(`/months/${month}/assignment-import/${file.id}/download`), '履约表原文件已下载')}>下载已导入原文件</button></div> : <p className="muted">本月尚未导入履约表。支持 .xlsx，最多20MB；预览确认后保存原文件和分配依据。</p>}
     {preview && <dialog className="assignment-import" ref={dialog} onCancel={e => { if (busy) e.preventDefault(); else setPreview(null); }}>
       <header><h2>履约表分配预览 · {month}</h2><button disabled={busy} aria-label="关闭履约表预览" onClick={() => setPreview(null)}>×</button></header>
