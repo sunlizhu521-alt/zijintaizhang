@@ -4,6 +4,7 @@ import { paymentTableTotals } from '../server/payment-table.js';
 import { Empty, Pager } from './components.jsx';
 import { moneyInWan, monthText } from './format.js';
 import { supplierRecordDetails } from './supplier-data.js';
+import DashboardDownload from './DashboardDownload.jsx';
 import './payment-details.css';
 
 const measures = [['totalCents', '总金额'], ['paidCents', '已付'], ['unpaidCents', '未付'], ['unappliedUnpaidCents', '未提交申请单金额']];
@@ -47,7 +48,7 @@ function Evidence({ record, plan }) {
   </div>;
 }
 
-export default function PaymentDetails({ records = [], measure = 'totalCents' }) {
+export default function PaymentDetails({ records = [], measure = 'totalCents', downloadSelection }) {
   const [page, setPage] = useState(1);
   const [expanded, setExpanded] = useState(null);
   const rows = useMemo(() => records.flatMap((record, recordIndex) => (record.selectedPlans ?? record.plans ?? []).map((plan, planIndex) => ({ record, plan, id: `${recordIndex}-${planIndex}` }))), [records]);
@@ -71,7 +72,7 @@ export default function PaymentDetails({ records = [], measure = 'totalCents' })
           {measures.map(([key]) => <td key={key} className={amountClass(key)}><Amount value={row.plan[key === 'totalCents' ? 'amountCents' : key]} /></td>)}
           <td>{detailButton(row)}</td>
         </tr>
-        {expanded === row.id && <tr className="pd-evidence-row"><td colSpan={7 + measures.length}><Evidence record={row.record} plan={row.plan} /></td></tr>}
+        {expanded === row.id && <tr className="pd-evidence-row"><td colSpan={7 + measures.length}>{downloadSelection && <div className="detail-download-toolbar"><DashboardDownload label="下载本笔依据" options={{ ...downloadSelection, recordKey: row.record.key, detailMonth: row.plan.month || 'pending' }} /></div>}<Evidence record={row.record} plan={row.plan} /></td></tr>}
       </Fragment>)}</tbody>
       <tfoot><tr><th colSpan={6} scope="row">全部合计（{rows.length} 笔）</th>{measures.map(([key]) => <td key={key} className={amountClass(key)}><Amount value={totals[key]} /></td>)}<td /></tr></tfoot>
     </table></div>

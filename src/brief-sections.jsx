@@ -3,6 +3,7 @@ import { CATEGORIES } from '../shared/constants.js';
 import { moneyInWan, monthText } from './format.js';
 import { Modal, Pager } from './components.jsx';
 import { supplierRecordDetails } from './supplier-data.js';
+import DashboardDownload from './DashboardDownload.jsx';
 
 export function SupplierSearch({ options, value, onChange }) {
   const id = useId();
@@ -63,7 +64,7 @@ export function ReviewTable({ groups }) {
   const [page, setPage] = useState(1);
   const [selected, setSelected] = useState(null);
   useEffect(() => { setPage(1); setSelected(null); }, [groups]);
-  return <>{!groups.length ? <p className="brief-empty">暂无待核对供应商</p> : <><p className="unit-label">以下是需要确认的提示，相关记录金额不代表差错金额。</p><div className="table-wrap review-suppliers"><table aria-label="待核对供应商"><thead><tr><th>供应商</th><th>需要核对</th><th>相关记录金额（万元）</th><th>查看详情</th></tr></thead><tbody>{groups.slice((page - 1) * 20, page * 20).map(group => <tr key={group.supplier}><td>{group.supplier || '—'}</td><td><div className="review-reasons">{[...new Set((group.reviewIssues || []).map(issue => issue.title || issue.message))].map(title => <span className="tag neutral" key={title}>{title}</span>)}</div></td><td>{moneyInWan(group.totalCents)}</td><td><button className="text-button" aria-label={`查看${group.supplier || '未填写供应商'}待核对详情`} onClick={() => setSelected(group)}>查看 {group.records.length} 笔</button></td></tr>)}</tbody></table></div><Pager page={page} total={groups.length} onChange={setPage} /></>}{selected && <Modal title={`${selected.supplier || '未填写供应商'} · 待核对明细`} onClose={() => setSelected(null)} wide><ReviewRecords records={selected.records} /></Modal>}</>;
+  return <>{!groups.length ? <p className="brief-empty">暂无待核对供应商</p> : <><p className="unit-label">以下是需要确认的提示，相关记录金额不代表差错金额。</p><div className="table-wrap review-suppliers"><table aria-label="待核对供应商"><thead><tr><th>供应商</th><th>需要核对</th><th>相关记录金额（万元）</th><th>查看详情</th></tr></thead><tbody>{groups.slice((page - 1) * 20, page * 20).map(group => <tr key={group.supplier}><td>{group.supplier || '—'}</td><td><div className="review-reasons">{[...new Set((group.reviewIssues || []).map(issue => issue.title || issue.message))].map(title => <span className="tag neutral" key={title}>{title}</span>)}</div></td><td>{moneyInWan(group.totalCents)}</td><td><button className="text-button" aria-label={`查看${group.supplier || '未填写供应商'}待核对详情`} onClick={() => setSelected(group)}>查看 {group.records.length} 笔</button></td></tr>)}</tbody></table></div><Pager page={page} total={groups.length} onChange={setPage} /></>}{selected && <Modal title={`${selected.supplier || '未填写供应商'} · 待核对明细`} onClose={() => setSelected(null)} wide actions={<DashboardDownload options={{ exportView: 'review', detailSupplier: selected.supplier }} />}><ReviewRecords records={selected.records} /></Modal>}</>;
 }
 const reviewLocation = location => [location.filename, location.sourceSheet, location.sourceRow ? `第 ${location.sourceRow} 行` : ''].filter(Boolean).join(' · ') || '—';
 function ReviewReasons({ issues = [] }) {

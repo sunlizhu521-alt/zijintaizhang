@@ -116,3 +116,12 @@ body:has(.funds-shell),body:has(.funds-auth){background:#F4F7FB}
 .payment-records-scroll td{padding:6px 8px}
 .payment-records-scroll .tag{padding:1px 5px;font-size:10px}
 .application-basis{display:inline-block;margin-left:5px;color:#6B7280;font-size:10px;white-space:nowrap}
+.download-actions,.modal-heading-actions,.detail-download-toolbar{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.modal-download-heading h2{min-width:0;overflow-wrap:anywhere}
+.modal-heading-actions{justify-content:flex-end;flex-shrink:0}
+.detail-download-toolbar{justify-content:space-between;margin-bottom:10px}
+.detail-download-toolbar p{margin:0}
+.dashboard-download{display:inline-flex;flex-direction:column;align-items:flex-end;gap:5px;max-width:100%}
+.dashboard-download button{white-space:nowrap}
+.download-error{font-size:12px;color:#b42318;max-width:280px;overflow-wrap:anywhere}
+@media(max-width:620px){.modal-download-heading{flex-wrap:wrap}.modal-heading-actions{margin-left:auto}.download-actions{gap:8px;justify-content:flex-end}}

@@ -11,6 +11,7 @@ import { audit, serializeAudit } from './db.js';
 import { buildDashboard } from './dashboard.js';
 import { runParser } from './parse-job.js';
 import { dashboardExport, logsExport } from './exports.js';
+import { dashboardExportScope, scopedDashboardExport } from './dashboard-export.js';
 import { initializeStorage, fail, requireSlot, listSlots, createDraft, getDraft, activateDraft,
   listVersions, getVersion, versionDetails, restoreVersion, activeData } from './storage.js';
 
@@ -112,9 +113,11 @@ export function createApp({ db, secureCookies = false, publicOrigin = '', trustP
   const dashboard = query => { const data = activeData(db); return buildDashboard(data.records, data.issues, data.slots, filtersFrom(query)); };
   api.get('/dashboard', permission('dashboard'), (req, res) => res.json(dashboard(req.query)));
   api.get('/dashboard/export', permission('dashboard'), permission('export'), async (req, res) => {
-    const buffer = await dashboardExport(dashboard(req.query));
-    audit(db, { ...requestEvent(req), kind: 'operation', action: '导出看板明细', outcome: 'success', details: filtersFrom(req.query) });
-    excelResponse(res, '资金台账', buffer);
+    const filters = filtersFrom(req.query), scope = dashboardExportScope(req.query);
+    const data = dashboard(req.query);
+    const result = scope ? await scopedDashboardExport(data, scope, filters) : { title: '资金台账', buffer: await dashboardExport(data) };
+    audit(db, { ...requestEvent(req), kind: 'operation', action: '导出看板明细', outcome: 'success', details: { ...filters, ...scope } });
+    excelResponse(res, result.title, result.buffer);
   });
   api.get('/files', permission('files'), (req, res) => res.json({ slots: listSlots(db) }));
   api.get('/orders', permission('files'), (req, res) => res.json({ slots: listSlots(db, [ORDER_SLOT]) }));

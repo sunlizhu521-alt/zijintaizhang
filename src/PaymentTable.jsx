@@ -2,20 +2,11 @@ import { useEffect, useMemo, useState } from 'react';
 import { moneyInWan, monthText } from './format.js';
 import { Empty, Modal } from './components.jsx';
 import PaymentDetails from './PaymentDetails.jsx';
+import DashboardDownload from './DashboardDownload.jsx';
+import { detailRecords } from '../shared/payment-detail-selection.js';
 import './payment-table.css';
 
 const measures = [['totalCents', '总金额'], ['paidCents', '已支付金额'], ['unpaidCents', '未支付金额'], ['unappliedUnpaidCents', '未提交申请单金额']];
-
-function detailRecords(records, selection) {
-  if (!selection) return [];
-  return records.filter(record => selection.categories.includes(record.category)).flatMap(record => {
-    const plans = (record.selectedPlans || record.plans || []).filter(plan =>
-      (selection.month === 'period' ? Boolean(plan.month) : (plan.month || 'pending') === selection.month) &&
-      (selection.measure !== 'unappliedUnpaidCents' || plan.applicationState !== 'applied') &&
-      (selection.measure === 'totalCents' || plan.amountCents === 0 || plan[selection.measure] == null || plan[selection.measure] !== 0));
-    return plans.length ? [{ ...record, selectedPlans: plans, selectedPlanCents: plans.reduce((sum, plan) => sum + plan.amountCents, 0) }] : [];
-  });
-}
 
 export default function PaymentTable({ table, records = [], pending = false }) {
   const [expanded, setExpanded] = useState(false);
@@ -30,6 +21,7 @@ export default function PaymentTable({ table, records = [], pending = false }) {
   const hasRecords = table?.hasRecords ?? months.length > 0;
   const columns = pending ? months : [...months, 'period'];
   const monthLabel = month => month === 'period' ? '合计' : monthText(month);
+  const downloadSelection = selection && { exportView: 'drilldown', table: pending ? 'pending' : 'monthly', rowId: selection.rowId, detailMonth: selection.month, measure: selection.measure };
 
   function categoryLabel(row) {
     return <>{row.label}{row.available && row.missingSources?.length > 0 && <small className="ps-partial" title={`尚未上传：${row.missingSources.join('、')}`}>部分上传</small>}</>;
@@ -38,7 +30,7 @@ export default function PaymentTable({ table, records = [], pending = false }) {
     return columns.flatMap(month => measures.map(([key, label], index) => {
       const cell = month === 'period' ? row.period : row.cells[month];
       return <td key={`${month}-${key}`} className={`ps-${key}${index === 0 ? ' ps-month-start' : ''}${month === 'period' ? ' ps-period' : ''}`}>
-        {!row.available ? <span className="ps-unavailable">未上传</span> : <button className="ps-amount" aria-label={`${row.label} ${monthLabel(month)} ${label} 查看明细`} title={cell?.[key] == null ? `${label}待核对，点击查看对应记录` : undefined} onClick={() => setSelection({ categories: row.categories, month, measure: key, title: `${row.label} · ${monthLabel(month)} · ${label}` })}>
+        {!row.available ? <span className="ps-unavailable">未上传</span> : <button className="ps-amount" aria-label={`${row.label} ${monthLabel(month)} ${label} 查看明细`} title={cell?.[key] == null ? `${label}待核对，点击查看对应记录` : undefined} onClick={() => setSelection({ rowId: row.id, categories: row.categories, month, measure: key, title: `${row.label} · ${monthLabel(month)} · ${label}` })}>
           {cell?.[key] == null ? '待核对' : moneyInWan(cell[key])}
         </button>}
       </td>;
@@ -47,7 +39,7 @@ export default function PaymentTable({ table, records = [], pending = false }) {
 
   return <section className="panel payment-panel" aria-label={title}>
     <div className="section-heading"><div><h2>{title}</h2><p>单位：万元 · 点击金额查看明细</p></div>
-      {hasRecords && <button className="text-button" aria-expanded={expanded} aria-label={expanded ? '收起付款分类' : '展开付款分类'} onClick={() => setExpanded(value => !value)}>{expanded ? '收起' : '查看'}</button>}
+      <div className="download-actions"><DashboardDownload options={{ exportView: pending ? 'pending' : 'monthly' }} />{hasRecords && <button className="text-button" aria-expanded={expanded} aria-label={expanded ? '收起付款分类' : '展开付款分类'} onClick={() => setExpanded(value => !value)}>{expanded ? '收起' : '查看'}</button>}</div>
     </div>
     {!hasRecords ? <Empty title={pending ? '暂无时间待定记录' : '当前区间暂无计划'} /> : <div className="payment-summary-scroll" tabIndex={0} role="region" aria-label={`${title}表格，可横向滚动`}>
       <table className={`payment-summary-table${expanded ? ' ps-expanded' : ''}`} style={{ minWidth: `${(expanded ? 302 : 164) + columns.length * measures.length * 96}px` }} aria-label={pending ? '时间待定付款父子汇总表' : '月度付款父子汇总表'}>
@@ -67,6 +59,6 @@ export default function PaymentTable({ table, records = [], pending = false }) {
         {total && <tfoot><tr data-row-id="total"><th scope="row" colSpan={expanded ? 2 : 1} className="ps-category">{categoryLabel(total)}</th>{amountCells(total)}</tr></tfoot>}
       </table>
     </div>}
-    {selection && <Modal title={selection.title} onClose={() => setSelection(null)} wide><PaymentDetails records={selectedRecords} measure={selection.measure} /></Modal>}
+    {selection && <Modal title={selection.title} onClose={() => setSelection(null)} wide actions={<DashboardDownload options={downloadSelection} />}><PaymentDetails records={selectedRecords} measure={selection.measure} downloadSelection={downloadSelection} /></Modal>}
   </section>;
 }

@@ -3,6 +3,7 @@ import { CATEGORIES } from '../shared/constants.js';
 import { Empty, Pager } from './components.jsx';
 import { moneyInWan, monthText, planAmount } from './format.js';
 import { supplierRecordDetails } from './supplier-data.js';
+import DashboardDownload from './DashboardDownload.jsx';
 import './supplier-table.css';
 
 function Amount({ cents }) {
@@ -28,11 +29,11 @@ function recordFields(record) {
   ];
 }
 
-function SupplierDetails({ group }) {
+function SupplierDetails({ group, exportView }) {
   const [page, setPage] = useState(1);
   const rows = group.records.slice((page - 1) * 20, page * 20).map(recordFields);
   return <div className="supplier-detail-content">
-    <p className="supplier-detail-note">共 {group.records.length} 笔 · 单位：万元 · 分批安排按原表展示</p>
+    <div className="detail-download-toolbar"><p className="supplier-detail-note">共 {group.records.length} 笔 · 单位：万元 · 分批安排按原表展示</p><DashboardDownload options={{ exportView, detailSupplier: group.supplier }} /></div>
     <div className="supplier-detail-scroll" tabIndex={0} role="region" aria-label="供应商付款明细，可横向滚动">
       <table className="supplier-detail-table" aria-label={`${group.supplier || '未填写供应商'}付款明细`}>
         <thead><tr>{rows[0].map(([label]) => <th scope="col" key={label}>{label}</th>)}</tr></thead>
@@ -43,7 +44,7 @@ function SupplierDetails({ group }) {
   </div>;
 }
 
-export default function SupplierTable({ groups = [] }) {
+export default function SupplierTable({ groups = [], exportView = 'suppliers' }) {
   const [page, setPage] = useState(1);
   const [expanded, setExpanded] = useState(new Set());
   const id = useId();
@@ -72,7 +73,7 @@ export default function SupplierTable({ groups = [] }) {
             <td>{group.months.map(month => <span className="supplier-month" key={month || 'pending'}>{monthText(month)}</span>)}</td>
             <td><button className="text-button" aria-expanded={open} aria-controls={detailId} aria-label={`${open ? '收起' : '查看'}${group.supplier || '未填写供应商'}详情`} onClick={() => toggle(group.supplier)}>{open ? '收起' : '查看详情'}</button></td>
           </tr>
-          {open && <tr className="supplier-expanded-detail" id={detailId}><td colSpan={7}><SupplierDetails group={group} /></td></tr>}
+          {open && <tr className="supplier-expanded-detail" id={detailId}><td colSpan={7}><SupplierDetails group={group} exportView={exportView} /></td></tr>}
         </Fragment>;
       })}</tbody>
     </table></div>

@@ -1,7 +1,7 @@
 import ExcelJS from 'exceljs';
 import { CATEGORIES } from '../shared/constants.js';
 
-function makeSheet(book, name, columns, rows) {
+export function makeSheet(book, name, columns, rows) {
   const sheet = book.addWorksheet(name, { views: [{ state: 'frozen', ySplit: 1 }] });
   sheet.columns = columns.map(([header, key, width = 18]) => ({ header, key, width }));
   rows.forEach(row => sheet.addRow(row));

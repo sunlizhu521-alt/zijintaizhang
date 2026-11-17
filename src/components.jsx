@@ -12,11 +12,12 @@ export function ErrorNotice({ error }) {
 }
 export function Empty({ title = '暂无数据', children }) { return <div className="empty"><span className="empty-mark" aria-hidden="true">≡</span><strong>{title}</strong>{children && <p>{children}</p>}</div>; }
 export function Loading() { return <div className="loading" role="status"><span className="spinner" />正在读取…</div>; }
-export function Modal({ title, onClose, children, wide = false }) {
+export function Modal({ title, onClose, children, wide = false, actions }) {
   const ref = useRef(null);
   useEffect(() => { const dialog = ref.current; dialog.showModal(); return () => { if (dialog.open) dialog.close(); }; }, []);
+  const closeButton = <button type="button" className="icon-button" aria-label="关闭弹窗" onClick={onClose}>×</button>;
   return <dialog ref={ref} className={wide ? 'modal wide' : 'modal'} onCancel={event => { event.preventDefault(); onClose(); }} aria-label={title}>
-    <div className="modal-heading"><h2>{title}</h2><button type="button" className="icon-button" aria-label="关闭弹窗" onClick={onClose}>×</button></div>
+    <div className={actions ? 'modal-heading modal-download-heading' : 'modal-heading'}><h2>{title}</h2>{actions ? <div className="modal-heading-actions">{actions}{closeButton}</div> : closeButton}</div>
     <div className="modal-content">{children}</div>
   </dialog>;
 }
