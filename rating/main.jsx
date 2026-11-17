@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client';
 import { api, download, setCsrf } from './api.js';
 import { RATING_BANDS, RATING_PERMISSIONS, RATING_MONTH_LABELS, ratingMonth } from '../shared/rating.js';
 import { PASSWORD_MESSAGE } from '../shared/password.js';
+import FulfillmentImport from './FulfillmentImport.jsx';
 import './style.css';
 const Feedback = React.createContext({ error: '', busy: false });
 const scoreText = value => value == null ? '—' : Number(value).toFixed(1);
@@ -91,6 +92,7 @@ function Records({ bundle, user, perform, busy }) {
   {editing && <Modal title="过程记录" onClose={() => setEditing(null)}><form onSubmit={async e => { e.preventDefault(); if (await perform(() => api(`/records/${editing.id}`, { method: 'PUT', body: editing }))) setEditing(null); }}><div className="form-grid"><label>供应商<select required disabled={editing.revision > 0} value={editing.supplierId} onChange={e => setEditing({ ...editing, supplierId: e.target.value })}>{bundle.assignments.map(a => <option key={a.supplier_id} value={a.supplier_id}>{a.code} · {a.name}</option>)}</select></label><label>关联项目<select value={editing.item} onChange={e => setEditing({ ...editing, item: e.target.value })}>{bundle.rule.items.map(i => <option key={i.id} value={i.id}>{i.name}</option>)}</select></label>{[['issue', '问题及依据'], ['attribution', '责任归属（供应商 / 我方 / 共同）'], ['action', '改善措施'], ['owner', '负责人'], ['dueDate', '计划完成日期'], ['completedDate', '实际完成日期'], ['review', '采购复核意见']].map(([key, label]) => <label key={key}>{label}{key.endsWith('Date') ? <input type="date" value={editing[key]} onChange={e => setEditing({ ...editing, [key]: e.target.value })} /> : <textarea required={key === 'issue'} disabled={key === 'review' && !user.isAdmin} maxLength="2000" value={editing[key]} onChange={e => setEditing({ ...editing, [key]: e.target.value })} />}</label>)}<label>状态<select value={editing.state} onChange={e => setEditing({ ...editing, state: e.target.value })}>{['待处理', '处理中', '已完成'].map(s => <option key={s}>{s}</option>)}</select></label></div><button className="primary" disabled={busy}>保存记录</button></form></Modal>}</section>;
 }
 function Management({ bootstrap, bundle, month, perform, busy }) {
+  const feedback = React.useContext(Feedback);
   const [supplier, setSupplier] = useState(null), [preview, setPreview] = useState(null), [assign, setAssign] = useState(null), [sourceMonth, setSourceMonth] = useState(''), [chosen, setChosen] = useState([]);
   const [closing, setClosing] = useState(false), [reason, setReason] = useState(''), [confirmPartial, setConfirmPartial] = useState(false);
   const [search, setSearch] = useState('');
@@ -98,6 +100,7 @@ function Management({ bootstrap, bundle, month, perform, busy }) {
   async function upload(e) { const file = e.target.files[0]; if (!file) return; const form = new FormData(); form.append('file', file); const result = await perform(() => api('/suppliers/import/preview', { method: 'POST', body: form }), '请核对导入预览，确认后才更新名单'); if (result) setPreview(result); e.target.value = ''; }
   const openAssign = ids => { setChosen(ids); const previous = ids.length === 1 ? bundle?.assignments.find(a => a.supplier_id === ids[0]) : null; setAssign({ userIds: previous?.raters.map(r => r.id) || [], exempt: previous?.exempt || false, reason: previous?.reason || '' }); };
   return <>
+    <FulfillmentImport key={month} month={month} bundle={bundle} perform={perform} busy={busy} error={feedback.error} />
     <section className="panel"><div className="section-heading"><div><h2>{month} · 评价安排</h2><p className="muted">在右上角选择评价月份，可开启当月或历史月份，例如11月补评10月。各月名单、评分和报告独立保存。</p></div>{bundle && <span className="tag">{RATING_MONTH_LABELS[bundle.month.status]} · 规则 V{bundle.rule.id}</span>}</div>
     {!bundle ? <div className="actions"><label>复制已有月份的名单<select value={sourceMonth} onChange={e => setSourceMonth(e.target.value)}><option value="">不复制，重新分配</option>{bootstrap.months.filter(m => m.month < month).map(m => <option key={m.month}>{m.month}</option>)}</select></label><button className="primary" disabled={busy} onClick={() => perform(() => api('/months', { method: 'POST', body: { month, sourceMonth } }), `${month} 评价已开启`)}>开启 {month} 评价</button></div> : <>
       {bundle.month.status === 'paused' && <p className="notice" role="status">此月份已临时关闭，评分和评价人分配已锁定。已有数据可查看、下载，过程整改可继续跟进；恢复后可继续评分，不生成结月报告。</p>}

@@ -7,6 +7,7 @@ import { runParser } from './parse-job.js';
 import { RATING_BASE, RATING_ITEMS, RATING_PERMISSIONS } from '../shared/rating.js';
 import { initializeRating, fail, textValue, monthValue, now, decode, rules, monthRow, checkRevision, assignment, history, monthBundle, dashboard, openMonth } from './rating-store.js';
 import { supplierTemplate, exportRating, exportRatingPeriod } from './rating-excel.js';
+import { prepareAssignmentImport, applyAssignmentImport } from './rating-assignment-import.js';
 const can = (user, key) => user.isAdmin || user.permissions.includes(key);
 function exportResponse(res, name, buffer) { res.attachment(`${name}.xlsx`).type('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet').send(Buffer.from(buffer)); }
 function supplierInput(input) { return { code: textValue(input.code, '供应商编码', 80), name: textValue(input.name, '供应商名称', 200), active: input.active !== false }; }
@@ -170,6 +171,29 @@ export function createRatingApi(db, { secureCookies = false, publicOrigin = '' }
   })));
   api.get('/suppliers/template', auth.requireAdmin, async (_req, res) => exportResponse(res, '供应商名单模板_V1', await supplierTemplate()));
   const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024, files: 1, fields: 0, parts: 1 } });
+  api.post('/months/:month/assignment-import/preview', auth.requireAdmin, upload.single('file'), async (req, res) => {
+    monthRow(db, req.params.month, true);
+    if (!req.file || !/\.xlsx$/i.test(req.file.originalname)) throw fail('请选择 .xlsx 采购履约表');
+    const parsed = await runParser('ratingAssignments', req.file.buffer, {});
+    auth.authenticate(req, res, () => auth.requireAdmin(req, res, () => {
+      const preview = prepareAssignmentImport(db, req.params.month, parsed), id = randomUUID();
+      const filename = Buffer.from(req.file.originalname, 'latin1').toString('utf8').slice(0, 240);
+      db.prepare('DELETE FROM rating_assignment_imports WHERE committed=0 AND created_at<?').run(new Date(Date.now() - 3600000).toISOString());
+      db.prepare('INSERT INTO rating_assignment_imports(id,month,user_id,filename,content,data_json,created_at) VALUES(?,?,?,?,?,?,?)').run(id, req.params.month, req.user.id, filename, req.file.buffer, JSON.stringify(preview), now());
+      const { baseline, ...visible } = preview;
+      res.json({ ...visible, id, filename });
+    }));
+  });
+  api.post('/months/:month/assignment-import/commit', auth.requireAdmin, (req, res) => res.json(transaction(db, () => {
+    const draft = db.prepare('SELECT * FROM rating_assignment_imports WHERE id=? AND month=? AND user_id=? AND committed=0 AND created_at>?').get(req.body.id, req.params.month, req.user.id, new Date(Date.now() - 3600000).toISOString());
+    if (!draft) throw fail('导入预览失效，请重新上传', 409);
+    return applyAssignmentImport(db, req.user, draft, req.body);
+  })));
+  api.get('/months/:month/assignment-import/:id/download', auth.requireAdmin, (req, res) => {
+    const file = db.prepare('SELECT filename,content FROM rating_assignment_imports WHERE id=? AND month=? AND committed=1').get(req.params.id, req.params.month);
+    if (!file) throw fail('未找到已确认的履约表', 404);
+    res.attachment(file.filename).type('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet').send(Buffer.from(file.content));
+  });
   api.post('/suppliers/import/preview', auth.requireAdmin, upload.single('file'), async (req, res) => {
     if (!req.file || !/\.xlsx$/i.test(req.file.originalname)) throw fail('请选择 .xlsx 文件');
     const rows = await runParser('ratingSuppliers', req.file.buffer, {});

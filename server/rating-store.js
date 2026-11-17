@@ -19,6 +19,7 @@ export function initializeRating(db) {
     CREATE TABLE IF NOT EXISTS rating_history(id TEXT PRIMARY KEY, month TEXT NOT NULL, supplier_id TEXT NOT NULL DEFAULT '', user_id TEXT NOT NULL, action TEXT NOT NULL, data_json TEXT NOT NULL, created_at TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS rating_snapshots(month TEXT NOT NULL REFERENCES rating_months(month), version INTEGER NOT NULL, data_json TEXT NOT NULL, created_at TEXT NOT NULL, PRIMARY KEY(month,version));
     CREATE TABLE IF NOT EXISTS rating_imports(id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id), filename TEXT NOT NULL, content BLOB NOT NULL, data_json TEXT NOT NULL, created_at TEXT NOT NULL, committed INTEGER NOT NULL DEFAULT 0);
+    CREATE TABLE IF NOT EXISTS rating_assignment_imports(id TEXT PRIMARY KEY, month TEXT NOT NULL REFERENCES rating_months(month), user_id TEXT NOT NULL REFERENCES users(id), filename TEXT NOT NULL, content BLOB NOT NULL, data_json TEXT NOT NULL, created_at TEXT NOT NULL, committed INTEGER NOT NULL DEFAULT 0);
     CREATE INDEX IF NOT EXISTS rating_records_month ON rating_records(month,supplier_id);`);
   if (!db.prepare('SELECT id FROM rating_rules LIMIT 1').get()) db.prepare('INSERT INTO rating_rules(data_json,created_at) VALUES(?,?)').run(JSON.stringify({ items: RATING_ITEMS }), now());
 }
@@ -59,7 +60,8 @@ export function monthBundle(db, month, user) {
   return { month: m, rule, assignments: assignments.map(a => user.isAdmin ? a : { ...a, raters: a.raters.filter(r => r.id === user.id) }), summaries,
     scores: scores.filter(s => user.isAdmin || s.user_id === user.id),
     records: db.prepare('SELECT * FROM rating_records WHERE month=? ORDER BY updated_at DESC').all(month).map(decode).filter(r => ids.has(r.supplier_id) && (user.isAdmin || r.user_id === user.id)),
-    snapshots: db.prepare('SELECT month,version,created_at FROM rating_snapshots WHERE month=? ORDER BY version DESC').all(month) };
+    snapshots: db.prepare('SELECT month,version,created_at FROM rating_snapshots WHERE month=? ORDER BY version DESC').all(month),
+    assignmentImport: user.isAdmin ? db.prepare('SELECT id,filename,created_at,json_extract(data_json,\'$.summary\') summary FROM rating_assignment_imports WHERE month=? AND committed=1 ORDER BY created_at DESC,rowid DESC LIMIT 1').get(month) || null : null };
 }
 export function dashboard(db, year, user) {
   if (!/^20\d{2}$/.test(String(year))) throw fail('年份无效');

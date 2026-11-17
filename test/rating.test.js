@@ -11,6 +11,7 @@ import { initAdmin } from '../server/auth.js';
 import { createApp } from '../server/app.js';
 import { RATING_ITEMS, ratingGrade } from '../shared/rating.js';
 import { parseRatingSuppliers } from '../server/rating-excel.js';
+import { parseAssignmentWorkbook } from '../server/rating-assignment-import.js';
 const base = '/gongyingshangpingji/api';
 async function fixture(t) {
   const dir = mkdtempSync(join(tmpdir(), 'supplier-rating-'));
@@ -201,4 +202,103 @@ test('供应商导入预览保留原件，冲突不覆盖，确认后可持久�
   assert.equal(f.ratingDb.prepare('SELECT name FROM rating_suppliers WHERE id=?').get(id).name,'导入的新名称');
   assert.deepEqual(Buffer.from(f.ratingDb.prepare('SELECT content FROM rating_imports WHERE id=?').get(next.id).content),buffer);
   assert.equal(f.ratingDb.prepare('PRAGMA quick_check').get().quick_check,'ok');
+});
+
+async function fulfillmentFile(entries) {
+  const book = new ExcelJS.Workbook();
+  for (const [name, names] of entries) {
+    const sheet = book.addWorksheet(name); sheet.addRow(['采购下单人', '创建人', '供应商简称']);
+    names.forEach(name => sheet.addRow(['错误下单人', '错误创建人', name]));
+  }
+  return Buffer.from(await book.xlsx.writeBuffer());
+}
+async function previewAssignments(f, buffer, session = f.admin, expected = 200, month = '2026-10') {
+  const body = new FormData(); body.append('file', new Blob([buffer]), '合成履约表.xlsx');
+  const response = await fetch(f.origin + base + `/months/${month}/assignment-import/preview`, { method: 'POST', body, headers: { Cookie: session.cookie, 'X-CSRF-Token': session.csrfToken, Origin: f.origin } });
+  const data = await response.json(); assert.equal(response.status, expected, JSON.stringify(data)); return data;
+}
+function importChoices(preview, supplierId) {
+  const sheets = preview.sheets.filter(s => s.matchedUserId).map(s => ({ index: s.index, userId: s.matchedUserId }));
+  const needed = new Set(preview.sheets.filter(s => s.matchedUserId).flatMap(s => s.suppliers.map(s => s.index)));
+  return { id: preview.id, sheets, suppliers: preview.suppliers.filter(s => needed.has(s.index)).map(s => ({ index: s.index, supplierId: supplierId(s) })) };
+}
+test('履约表只按工作表命名人分配，多人供应商合并，原件和已有评分保持不变', async t => {
+  const f = await fixture(t), a = await f.user('rater-a'), b = await f.user('rater-b'), id = await f.supplier();
+  await f.call('/months', { month: '2026-10' }); await f.assign('2026-10', id, [f.admin.user.id]); await f.submit('2026-10', id, f.admin);
+  const scoresBefore = f.ratingDb.prepare('SELECT * FROM rating_scores').all();
+  const buffer = await fulfillmentFile([['rater-a', ['合成供应商001', '合成供应商001']], ['rater-b', ['合成新供应商', '供应商简称甲']], ['汇总资料', ['不应导入的汇总供应商']]]);
+  const preview = await previewAssignments(f, buffer);
+  assert.equal(preview.sheets[0].matchedUserId, a.user.id); assert.equal(preview.sheets[1].matchedUserId, b.user.id); assert.equal(preview.sheets[2].matchedUserId, '');
+  assert.deepEqual(preview.sheets[0].suppliers[0].rows, [2, 3]);
+  assert.equal(preview.suppliers.find(s => s.name === '供应商简称甲').matchedSupplierId, '');
+  const choices = importChoices(preview, s => s.name === '合成新供应商' ? 'new' : id);
+  const endpoint = '/months/2026-10/assignment-import/commit';
+  const summary = await f.call(endpoint, choices);
+  assert.deepEqual(summary, { sheets: 2, suppliers: 2, newSuppliers: 1, addedRaters: 3 });
+  const bundle = await f.call('/months/2026-10');
+  assert.deepEqual(bundle.assignments.find(s => s.supplier_id === id).raters.map(u => u.id).sort(), [f.admin.user.id, a.user.id, b.user.id].sort());
+  assert.equal(bundle.assignments.length, 2);
+  assert.deepEqual(f.ratingDb.prepare('SELECT * FROM rating_scores').all(), scoresBefore);
+  assert.equal(f.ratingDb.prepare('SELECT count(*) n FROM users').get().n, 3);
+  const saved = f.ratingDb.prepare('SELECT * FROM rating_assignment_imports WHERE id=?').get(preview.id);
+  assert.deepEqual(Buffer.from(saved.content), buffer); assert.equal(saved.committed, 1);
+  const changes = JSON.parse(f.ratingDb.prepare("SELECT data_json FROM rating_history WHERE action='导入履约表分配评价人'").get().data_json).changes;
+  assert.equal(changes.find(c => c.supplierId === id).sources.length, 2);
+  const download = await f.request(base + `/months/2026-10/assignment-import/${preview.id}/download`, { session: f.admin });
+  assert.equal(download.status, 200); assert.deepEqual(Buffer.from(download.data), buffer);
+  assert.equal(bundle.assignmentImport.id, preview.id);
+  assert.equal((await f.call('/months/2026-10', null, 'GET', a)).assignmentImport, null);
+  assert.equal((await f.request(base + `/months/2026-10/assignment-import/${preview.id}/download`, { session: a })).status, 403);
+  await previewAssignments(f, buffer, a, 403); await f.call(endpoint, choices, 'POST', a, 403);
+  await f.call(endpoint, choices, 'POST', f.admin, 409);
+  const repeated = await previewAssignments(f, buffer);
+  const again = await f.call(endpoint, importChoices(repeated, s => s.matchedSupplierId || id));
+  assert.equal(again.addedRaters, 0); assert.equal(again.newSuppliers, 0);
+  assert.deepEqual(f.ratingDb.prepare('SELECT * FROM rating_scores').all(), scoresBefore);
+  assert.equal(f.ratingDb.prepare('SELECT count(*) n FROM rating_suppliers').get().n, 2);
+});
+test('履约表预览校验缺失映射、并发修改、暂停和不参评，整批失败不产生部分分配', async t => {
+  const f = await fixture(t), a = await f.user('rater-a'), id = await f.supplier();
+  await f.call('/months', { month: '2026-10' }); await f.assign('2026-10', id, [a.user.id]);
+  const buffer = await fulfillmentFile([['rater-a', ['新供应商', '合成供应商001']]]);
+  const endpoint = '/months/2026-10/assignment-import/commit';
+  let preview = await previewAssignments(f, buffer), choices = importChoices(preview, s => s.matchedSupplierId || 'new');
+  await f.call(endpoint, { ...choices, sheets: [] }, 'POST', f.admin, 400);
+  await f.call(endpoint, { ...choices, sheets: [...choices.sheets, ...choices.sheets] }, 'POST', f.admin, 400);
+  await f.call(endpoint, { ...choices, suppliers: [] }, 'POST', f.admin, 400);
+  await f.call(endpoint, { ...choices, suppliers: choices.suppliers.map(s => ({ ...s, supplierId: 'unknown' })) }, 'POST', f.admin, 400);
+  assert.equal(f.ratingDb.prepare('SELECT count(*) n FROM rating_suppliers').get().n, 1);
+  await f.assign('2026-10', id, [a.user.id, f.admin.user.id], 1);
+  await f.call(endpoint, choices, 'POST', f.admin, 409);
+  preview = await previewAssignments(f, buffer); choices = importChoices(preview, s => s.matchedSupplierId || 'new');
+  f.ratingDb.prepare('UPDATE users SET active=0 WHERE id=?').run(a.user.id);
+  await f.call(endpoint, choices, 'POST', f.admin, 409);
+  f.ratingDb.prepare('UPDATE users SET active=1 WHERE id=?').run(a.user.id);
+  preview = await previewAssignments(f, buffer); choices = importChoices(preview, s => s.matchedSupplierId || 'new');
+  await f.call('/months/2026-10/pause', { revision: 1 });
+  await f.call(endpoint, choices, 'POST', f.admin, 409); await previewAssignments(f, buffer, f.admin, 409);
+  await f.call('/months/2026-10/resume', { revision: 2 });
+  await f.call(endpoint, choices, 'POST', f.admin, 409);
+  await f.call(`/months/2026-10/assignments/${id}`, { revision: 2, userIds: [], exempt: true, reason: '无业务' }, 'PUT');
+  preview = await previewAssignments(f, buffer); choices = importChoices(preview, s => s.matchedSupplierId || 'new');
+  await f.call(endpoint, choices, 'POST', f.admin, 409);
+  assert.equal(f.ratingDb.prepare('SELECT count(*) n FROM rating_suppliers').get().n, 1);
+  assert.equal(f.ratingDb.prepare('SELECT count(*) n FROM rating_assignments').get().n, 1);
+  assert.equal(f.ratingDb.prepare('SELECT committed FROM rating_assignment_imports WHERE id=?').get(preview.id).committed, 0);
+  await f.call('/months/2026-10/close', { revision: 3 }); await previewAssignments(f, buffer, f.admin, 409);
+});
+test('履约表解析保留原文名称和行号，隐藏表、空白、合并单元格与公式边界明确', async () => {
+  const book = new ExcelJS.Workbook(), s = book.addWorksheet('工作表命名人');
+  s.addRow(['标题']); s.addRow(['供应商', '创建人']); s.addRow(['甲供应商', '与工作表不同']); s.addRow([null, '另一个创建人']); s.addRow(['甲供应商有限公司', '']); s.addRow(['', '空供应商']);
+  s.mergeCells('A3:A4');
+  const hidden = book.addWorksheet('隐藏人员', { state: 'hidden' }); hidden.addRow(['供应商']); hidden.addRow(['隐藏供应商']);
+  const parsed = await parseAssignmentWorkbook(Buffer.from(await book.xlsx.writeBuffer()));
+  assert.deepEqual(parsed.suppliers.map(s => s.name), ['甲供应商', '甲供应商有限公司']);
+  assert.deepEqual(parsed.sheets[0].suppliers[0].rows, [3, 4]); assert.equal(parsed.sheets[0].blankRows, 1);
+  assert.equal(parsed.skipped[0].name, '隐藏人员');
+  s.getCell('A3').value = { formula: '"甲供应商"', result: '甲供应商' };
+  await assert.rejects(parseAssignmentWorkbook(Buffer.from(await book.xlsx.writeBuffer())), /公式/);
+  s.getCell('A3').value = '甲供应商'; s.getCell('C2').value = '供应商简称';
+  await assert.rejects(parseAssignmentWorkbook(Buffer.from(await book.xlsx.writeBuffer())), /多个供应商列/);
+  await assert.rejects(parseAssignmentWorkbook(Buffer.from('invalid')), /Excel|xlsx/);
 });
