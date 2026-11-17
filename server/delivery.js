@@ -110,7 +110,7 @@ function stageResult(row, events, available, reasons, asOfDate) {
   else if (quantity > 0) status = 'partial';
   return { available, review: reviewReasons.length > 0, reviewReasons, quantity, validQuantity,
     completionDate, lastDeliveryDate: events.map(event => event.deliveryDate).sort().at(-1) || null,
-    onTimeQuantity, status, events };
+    onTimeQuantity, status, events, remainingQuantity: quantity == null || !qtyValid(row.quantity) ? null : subtract(row.quantity, quantity) };
 }
 
 function summaryFor(rows, stage, stageAvailable, asOfDate) {
@@ -139,9 +139,9 @@ function summaryFor(rows, stage, stageAvailable, asOfDate) {
     orderedQuantity: physical.orderedQuantity, deliveredQuantity: physical.deliveredQuantity, outstandingQuantity: physical.outstandingQuantity, quantityRate: physical.quantityRate,
     completedCount: stageAvailable ? completed.length : null, completionRate: stageAvailable ? ratio(completed.length, positive.length) : null,
     dueCount: due.length, onTimeCount: stageAvailable ? onTime.length : null, onTimeRate: stageAvailable ? ratio(onTime.length, due.length) : null,
-    overdueCount: stageAvailable ? rows.filter(row => row.status === 'overdue').length : null,
-    warningCount: stageAvailable ? rows.filter(row => row.status === 'warning').length : null,
-    reviewCount: rows.filter(row => row.status === 'review').length, exceptionCount: rows.filter(row => row.hasException).length, closedCount: rows.filter(row => row.closed).length,
+    overdueCount: stageAvailable ? rows.filter(row => row[stage].status === 'overdue').length : null,
+    warningCount: stageAvailable ? rows.filter(row => row[stage].status === 'warning').length : null,
+    reviewCount: rows.filter(row => row[stage].status === 'review').length, exceptionCount: rows.filter(row => row.hasException).length, closedCount: rows.filter(row => row.closed).length,
     stageAvailable, quantityByUnit };
 }
 
@@ -190,13 +190,13 @@ function batchInfo(group, eventsByStage) {
 }
 
 export function deliveryFilters(query = {}) {
-  const filters = { stage: 'receipts' };
-  for (const key of ['from', 'to', 'supplier', 'status', 'search', 'stage']) {
+  if (Object.hasOwn(query, 'stage')) throw fail(400, '收料与入库已同时统计，不再支持口径切换');
+  const filters = {};
+  for (const key of ['from', 'to', 'supplier', 'status', 'search']) {
     if (query[key] == null || query[key] === '') continue;
     if (typeof query[key] !== 'string' || query[key].length > 250) throw fail(400, '筛选条件无效');
     filters[key] = query[key].trim();
   }
-  if (!STAGES.includes(filters.stage)) throw fail(400, '交付口径无效');
   for (const key of ['from', 'to']) if (filters[key] && !/^\d{4}-(0[1-9]|1[0-2])$/.test(filters[key])) throw fail(400, '月份格式应为 YYYY-MM');
   if (filters.from && filters.to && filters.from > filters.to) throw fail(400, '开始月份不能晚于结束月份');
   if (filters.status && !Object.hasOwn(STATUS, filters.status)) throw fail(400, '交付状态无效');
@@ -204,7 +204,7 @@ export function deliveryFilters(query = {}) {
 }
 
 export function buildDeliveryDashboard({ records = [], issues: sourceIssues = [], slots = [], followups = new Map(), filters: query = {}, asOfDate = today() } = {}) {
-  const filters = deliveryFilters(query), stage = filters.stage;
+  const filters = deliveryFilters(query);
   if (!dateValid(asOfDate)) throw fail(400, '统计日期无效');
   const issues = [...sourceIssues], rows = records.filter(row => row.sourceType === 'orders').map(row => ({ ...row, key: orderKey(row), reviewReasons: baseReasons(row),
     closed: text(row.rawFields?.['业务关闭']) === '业务关闭' || text(row.rawFields?.['关闭状态']) === '已关闭' }));
@@ -283,14 +283,13 @@ export function buildDeliveryDashboard({ records = [], issues: sourceIssues = []
   const batchByGroup = new Map([...groups].map(([key, group]) => [key, batchInfo(group, groupEvents.get(key))]));
   for (const row of rows) {
     row.batchInfo = batchByGroup.get(groupKey(row));
-    row.selectedStage = stage; row.status = row[stage].status;
-    row.remainingQuantity = row[stage].quantity == null || !qtyValid(row.quantity) ? null : subtract(row.quantity, row[stage].quantity);
   }
   const supplierOptions = [...new Set(rows.map(row => row.supplier).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'zh-CN'));
-  const filtered = rows.filter(row => (!filters.supplier || row.supplier === filters.supplier) && (!filters.status || row.status === filters.status) &&
+  const filtered = rows.filter(row => (!filters.supplier || row.supplier === filters.supplier) && (!filters.status || STAGES.some(stage => row[stage].status === filters.status)) &&
     (!filters.from || (row.dueDate && row.dueDate.slice(0, 7) >= filters.from)) && (!filters.to || (row.dueDate && row.dueDate.slice(0, 7) <= filters.to)) &&
     (!filters.search || [row.orderNumber, row.supplier, row.productCode, row.productName, row.specification, row.followup.data.owner].some(value => keyText(value).includes(keyText(filters.search)))));
-  const stageAvailable = Boolean(slots.find(slot => slot.id === `delivery_${stage}`)?.currentVersionId);
+  const summarize = members => Object.fromEntries(STAGES.map(stage => [stage,
+    summaryFor(members, stage, Boolean(slots.find(slot => slot.id === `delivery_${stage}`)?.currentVersionId), asOfDate)]));
   const groupSummary = key => {
     const groups = new Map();
     for (const row of filtered) {
@@ -298,19 +297,22 @@ export function buildDeliveryDashboard({ records = [], issues: sourceIssues = []
       if (!groups.has(value)) groups.set(value, []);
       groups.get(value).push(row);
     }
-    return [...groups.keys()].sort((a, b) => a.localeCompare(b, 'zh-CN')).map(value => ({ [key]: value, ...summaryFor(groups.get(value), stage, stageAvailable, asOfDate) }));
+    return [...groups.keys()].sort((a, b) => a.localeCompare(b, 'zh-CN')).map(value => ({ [key]: value, ...summarize(groups.get(value)) }));
   };
   const outsideScopeCount = issues.filter(issue => issue.code === 'OUTSIDE_ORDER_SCOPE').length;
   issues.sort((a, b) => Number(a.code === 'OUTSIDE_ORDER_SCOPE') - Number(b.code === 'OUTSIDE_ORDER_SCOPE'));
-  return { asOfDate, stage, filters, slots, rows: filtered, outsideScopeCount, summary: { ...summaryFor(filtered, stage, stageAvailable, asOfDate), outsideScopeCount },
+  return { asOfDate, filters, slots, rows: filtered, outsideScopeCount,
+    summary: { orderCount: new Set(filtered.map(row => row.orderNumber).filter(Boolean)).size, lineCount: filtered.length,
+      closedCount: filtered.filter(row => row.closed).length, exceptionCount: filtered.filter(row => row.hasException).length },
+    summaries: summarize(filtered),
     monthly: groupSummary('month'), suppliers: groupSummary('supplier'), issues,
     options: { suppliers: supplierOptions, statuses: STATUS }, policy: [
-      '收料通知单和采购入库单分别统计，不相加。切换口径后，交付率、交齐、延期和预警按所选单据独立计算。',
+      '以采购订单的单据编号分别关联收料通知单、采购入库单的源单单号。同屏展示两类交付数量、交齐率、按期交齐率、延期及预警，各自独立计算，不相加。',
       '以源单单号关联采购订单；入库源单为收料单时，通过收料单号和物料编码唯一追溯采购订单。保留原源单编号与收料单依据，不以收料数量替代入库数量。多目标或规格、单位、供应商冲突进入待核对，不自动分摊。',
       '按期交齐率＝截至统计日已到期且按交期交齐的有效订单行÷截至统计日已到期的有效正数量订单行。交齐日期为累计有效交付首次达到订单数量的日期。',
       '缺失、负数、重复、无法匹配、未来交付或无有效日期的记录不作为已交依据；受影响订单行从指标分母排除并标待核对。零数量行保留，不计交齐率分母。',
       '按用户确认，同一物料的采购、收料和入库数量采用一致的默认计量单位；原表未导出单位时保留为空。数量仅按同物料编码和单位汇总，不跨物料相加；明确不同单位不得直接合计。数量完成率逐行以订单数量封顶，超交单独提示。',
-      '数量汇总分组优先使用订单原单位；原单位未导出时，使用当前交付口径单据（含追溯收料单）的唯一明确单位作为分组依据，不回填订单原字段。',
+      '数量汇总分组优先使用订单原单位；原单位未导出时，分别使用收料或入库单据（含追溯收料单）的唯一明确单位作为对应类型的分组依据，不回填订单原字段。',
       '无分录行号时保留同一单据的不同原始明细行；完整字段相同的记录列为疑似重复，不自动计入。同一单据日期冲突列待核对。未上传交付槽位显示未知，不视为零交付。',
       '同一采购订单同物料有多个交期时，展示计划批次与实际收料、入库单据批次；未明确对应关系时不按FIFO分配，不把组级交付数量重复计入各订单行。',
       '原表业务关闭为“业务关闭”或关闭状态为“已关闭”的订单保留历史指标和未交差额，停止延期和到期预警。当前采购订单范围外的交付记录单独列示，不计入订单异常行数。',
@@ -369,7 +371,8 @@ export async function deliveryExport(data) {
         const edge = { style: 'thin', color: { argb: 'FFD5DCE5' } };
         cell.border = { top: edge, right: edge, bottom: edge, left: edge };
         if (cell.value instanceof Date) cell.numFmt = 'yyyy-mm-dd';
-        else if (typeof cell.value === 'number') cell.numFmt = ['onTimeRate', 'quantityRate'].includes(columns[cell.col - 1][1]) || (columns[cell.col - 1][1] === 'value' && source.label?.includes('率')) ? '0.00%' : '#,##0.######';
+        else if (typeof cell.value === 'number') cell.numFmt = ['completionRate', 'onTimeRate', 'quantityRate'].includes(columns[cell.col - 1][1].split(':').at(-1)) ||
+          (['value', ...STAGES].includes(columns[cell.col - 1][1]) && source.label?.includes('率')) ? '0.00%' : '#,##0.######';
         if (typeof cell.value === 'string' && cell.value.length > 70) row.height = Math.min(180, Math.max(row.height, Math.ceil(cell.value.length / 30) * 15));
       });
       row.commit();
@@ -382,19 +385,25 @@ export async function deliveryExport(data) {
     sheet.commit();
     await new Promise(resolve => setImmediate(resolve));
   };
-  const metrics = [['订单数', 'orderCount'], ['订单行数', 'lineCount'], ['有效计入行数', 'validLineCount'], ['已交齐行数', 'completedCount'], ['到期行数', 'dueCount'], ['按期交齐行数', 'onTimeCount'], ['按期交齐率', 'onTimeRate'], ['延期行数', 'overdueCount'], ['7天预警行数', 'warningCount'], ['待核对行数', 'reviewCount'], ['人工异常行数', 'exceptionCount'], ['已关闭行数', 'closedCount']];
-  await add('指标汇总', [['指标', 'label', 28], ['数值', 'value', 22]], metrics.map(([label, key]) => ({ label, value: data.summary[key] ?? '未知/不适用' })));
+  const metrics = [['订单数', 'orderCount'], ['订单行数', 'lineCount'], ['有效计入行数', 'validLineCount'], ['已交齐行数', 'completedCount'], ['交齐率', 'completionRate'], ['到期行数', 'dueCount'], ['按期交齐行数', 'onTimeCount'], ['按期交齐率', 'onTimeRate'], ['延期行数', 'overdueCount'], ['7天预警行数', 'warningCount'], ['待核对行数', 'reviewCount'], ['人工异常行数', 'exceptionCount'], ['已关闭行数', 'closedCount']];
+  const stageLabel = { receipts: '收料', inbound: '入库' };
+  await add('指标汇总', [['指标', 'label', 28], ['收料通知单', 'receipts', 22], ['采购入库单', 'inbound', 22]],
+    metrics.map(([label, key]) => ({ label, ...Object.fromEntries(STAGES.map(stage => [stage, data.summaries[stage][key] ?? '未知/不适用'])) })));
   for (const [name, field, label, list] of [['供应商指标', 'supplier', '供应商', data.suppliers], ['月度指标', 'month', '交期月份', data.monthly]]) {
-    await add(name, [[label, field, 30], ...metrics], list);
+    await add(name, [[label, field, 30], ...STAGES.flatMap(stage => metrics.map(([title, key]) => [`${stageLabel[stage]}${title}`, `${stage}:${key}`, 20]))],
+      list.map(row => ({ [field]: row[field], ...Object.fromEntries(STAGES.flatMap(stage => metrics.map(([, key]) => [`${stage}:${key}`, row[stage][key] ?? '未知/不适用']))) })));
   }
-  await add('数量分物料', [['物料编码', 'productCode', 24], ['物料名称', 'productName', 32], ['单位（未导出为空）', 'unit', 24], ['订单数量', 'orderedQuantity'], ['已交数量', 'deliveredQuantity'], ['未交数量', 'outstandingQuantity'], ['数量完成率', 'quantityRate']], data.summary.quantityByUnit);
-  const rows = data.rows.map(row => ({ ...row, status: STATUS[row.status], createdDate: nativeDate(row.createdDate), dueDate: nativeDate(row.dueDate),
+  await add('数量分物料', [['单据类型', 'type'], ['物料编码', 'productCode', 24], ['物料名称', 'productName', 32], ['统计单位', 'unit', 24], ['订单数量', 'orderedQuantity'], ['已交数量', 'deliveredQuantity'], ['未交数量', 'outstandingQuantity'], ['数量完成率', 'quantityRate']],
+    STAGES.flatMap(stage => data.summaries[stage].quantityByUnit.map(row => ({ ...row, type: stageLabel[stage] }))));
+  const rows = data.rows.map(row => ({ ...row, createdDate: nativeDate(row.createdDate), dueDate: nativeDate(row.dueDate),
     receiptsQuantity: row.receipts.quantity, inboundQuantity: row.inbound.quantity, receiptsDate: nativeDate(row.receipts.lastDeliveryDate), inboundDate: nativeDate(row.inbound.lastDeliveryDate),
     ...row.followup.data, expectedShipDate: nativeDate(row.followup.data.expectedShipDate),
     checks: CHECKS.map(key => `${({ productCheck: '产品', specificationCheck: '规格', quantityCheck: '数量', labelCheck: '标签', receivingCheck: '收货信息' })[key]}：${({ pending: '待核验', pass: '一致', issue: '异常' })[row.followup.data[key]]}`).join('\n'),
-    review: row[data.stage].reviewReasons.join('；'), closedText: row.closed ? '已关闭' : '未关闭',
+    receiptsRemaining: row.receipts.remainingQuantity, inboundRemaining: row.inbound.remainingQuantity,
+    receiptsStatus: STATUS[row.receipts.status], inboundStatus: STATUS[row.inbound.status],
+    receiptsReview: row.receipts.reviewReasons.join('；'), inboundReview: row.inbound.reviewReasons.join('；'), closedText: row.closed ? '已关闭' : '未关闭',
     batchText: `计划${row.batchInfo.plannedCount}批；收料${row.batchInfo.receiptCount}批；入库${row.batchInfo.inboundCount}批${row.batchInfo.shared ? '（同订单同物料组）' : ''}${row.batchInfo.allocationPending ? '；尚未分配到交期' : ''}` }));
-  await add('交付明细', [['订单号', 'orderNumber', 26], ['行号', 'lineNumber'], ['创建时间', 'createdDate'], ['交货日期', 'dueDate'], ['供应商', 'supplier', 30], ['物料编码', 'productCode', 24], ['产品', 'productName', 26], ['规格', 'specification', 26], ['单位', 'unit'], ['订单数量', 'quantity'], ['收料数量', 'receiptsQuantity'], ['最近收料日期', 'receiptsDate'], ['入库数量', 'inboundQuantity'], ['最近入库日期', 'inboundDate'], ['当前口径未交数量', 'remainingQuantity'], ['当前状态', 'status'], ['关闭标记', 'closedText'], ['交付批次备注', 'batchText', 50], ['生产进度', 'productionStatus'], ['发货进度', 'shippingStatus'], ['预计发货日期', 'expectedShipDate'], ['负责人', 'owner'], ['一致性核验', 'checks', 30], ['异常', 'exception', 45], ['处理措施', 'action', 45], ['备注', 'note', 40], ['标签要求', 'labelRequirement', 35], ['收货信息', 'receivingInfo', 40], ['待核对', 'review', 50], ['来源文件', 'filename', 40], ['工作表', 'sourceSheet', 24], ['原始行', 'sourceRow']], rows);
+  await add('交付明细', [['订单号', 'orderNumber', 26], ['行号', 'lineNumber'], ['创建时间', 'createdDate'], ['交货日期', 'dueDate'], ['供应商', 'supplier', 30], ['物料编码', 'productCode', 24], ['产品', 'productName', 26], ['规格', 'specification', 26], ['单位', 'unit'], ['订单数量', 'quantity'], ['收料数量', 'receiptsQuantity'], ['最近收料日期', 'receiptsDate'], ['入库数量', 'inboundQuantity'], ['最近入库日期', 'inboundDate'], ['收料未交数量', 'receiptsRemaining'], ['入库未交数量', 'inboundRemaining'], ['收料状态', 'receiptsStatus'], ['入库状态', 'inboundStatus'], ['关闭标记', 'closedText'], ['交付批次备注', 'batchText', 50], ['生产进度', 'productionStatus'], ['发货进度', 'shippingStatus'], ['预计发货日期', 'expectedShipDate'], ['负责人', 'owner'], ['一致性核验', 'checks', 30], ['异常', 'exception', 45], ['处理措施', 'action', 45], ['备注', 'note', 40], ['标签要求', 'labelRequirement', 35], ['收货信息', 'receivingInfo', 40], ['收料待核对', 'receiptsReview', 50], ['入库待核对', 'inboundReview', 50], ['来源文件', 'filename', 40], ['工作表', 'sourceSheet', 24], ['原始行', 'sourceRow']], rows);
   const batchGroups = [...new Map(data.rows.map(row => [groupKey(row), row])).values()];
   await add('交付批次', [['订单号', 'orderNumber', 26], ['物料编码', 'productCode', 24], ['批次类型', 'type'], ['单据号', 'documentNumber', 26], ['批次日期', 'date'], ['候选数量', 'quantity'], ['有效数量', 'validQuantity'], ['分配状态', 'allocation', 35], ['核对说明', 'review', 50], ['来源位置', 'locations', 60]],
     batchGroups.flatMap(row => [['plannedBatches', '计划'], ['receiptBatches', '收料'], ['inboundBatches', '入库']].flatMap(([key, type]) => row.batchInfo[key].map(batch => ({
@@ -407,9 +416,9 @@ export async function deliveryExport(data) {
   const issueColumns = [['问题', 'message', 65], ['类型', 'code', 24], ['订单号', 'orderNumber', 26], ['单据类型', 'sourceType'], ['来源文件', 'filename', 40], ['工作表', 'sourceSheet', 24], ['原始行', 'sourceRow']];
   await add('待核对', issueColumns, data.issues.filter(issue => issue.code !== 'OUTSIDE_ORDER_SCOPE'));
   await add('订单范围外单据', issueColumns, data.issues.filter(issue => issue.code === 'OUTSIDE_ORDER_SCOPE'));
-  await add('统计口径', [['项目', 'name', 28], ['说明', 'value', 100]], [
-    { name: '统计日期', value: nativeDate(data.asOfDate) }, { name: '当前口径', value: data.stage === 'receipts' ? '收料通知单' : '采购入库单' },
-    { name: '筛选条件', value: JSON.stringify(data.filters) }, ...data.policy.map((value, i) => ({ name: `口径 ${i + 1}`, value })),
+  await add('统计规则', [['项目', 'name', 28], ['说明', 'value', 100]], [
+    { name: '统计日期', value: nativeDate(data.asOfDate) }, { name: '指标展示', value: '收料通知单与采购入库单同时展示，各自关联采购订单、独立统计，不相加。' },
+    { name: '筛选条件', value: JSON.stringify(data.filters) }, ...data.policy.map((value, i) => ({ name: `规则 ${i + 1}`, value })),
     ...data.slots.map(slot => ({ name: slot.label, value: slot.filename ? `${slot.filename}；版本 ${slot.currentVersionId}` : '未上传' })),
   ]);
   await book.commit();

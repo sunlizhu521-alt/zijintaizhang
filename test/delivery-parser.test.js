@@ -172,3 +172,30 @@ test('用户确认采购日期作为创建日期，未导出单位保留空而�
   assert.deepEqual(parsed.records[0].invalidFields, []);
   assert.equal(parsed.sheets[0].mapping.createdDate, '采购日期');
 });
+
+
+test('明确主键列优先于新增别名列，两类交付仍兼容源单编号并保留全部原字段', async () => {
+  const orderColumns = [...orderHeaders, '采购订单号', '采购订单编号'];
+  const orderValues = [...orderRow, 'OPTIONAL-ORDER', 'OPTIONAL-NUMBER'];
+  const orders = await parse(await buffer(orderColumns, [orderValues]));
+  assert.equal(orders.records[0].orderNumber, 'PO-001');
+  assert.equal(orders.sheets[0].mapping.orderNumber, '单据编号');
+  assert.equal(orders.records[0].rawFields['采购订单号'], 'OPTIONAL-ORDER');
+  assert.equal(orders.records[0].rawFields['采购订单编号'], 'OPTIONAL-NUMBER');
+  assert.equal(orders.records[0].rawFields['单据编号'], 'PO-001');
+  for (const slotId of ['delivery_receipts', 'delivery_inbound']) {
+    // Put aliases before the declared source field to verify column order cannot override it.
+    const columns = ['源单编号', '源订单号', ...deliveryHeaders];
+    const values = ['OPTIONAL-SOURCE', 'OPTIONAL-ORDER', ...deliveryRow];
+    const delivery = await parse(await buffer(columns, [values]), slotId);
+    assert.equal(delivery.records[0].orderNumber, 'PO-001');
+    assert.equal(delivery.records[0].documentNumber, 'IN-001');
+    assert.equal(delivery.sheets[0].mapping.orderNumber, '源单单号');
+    assert.equal(delivery.records[0].rawFields['源单编号'], 'OPTIONAL-SOURCE');
+    assert.equal(delivery.records[0].rawFields['源订单号'], 'OPTIONAL-ORDER');
+    assert.equal(delivery.records[0].rawFields['源单单号'], 'PO-001');
+    const aliasOnly = await parse(await buffer(deliveryHeaders.map(header => header === '源单单号' ? '源单编号' : header), [deliveryRow]), slotId);
+    assert.equal(aliasOnly.records[0].orderNumber, 'PO-001');
+    assert.equal(aliasOnly.sheets[0].mapping.orderNumber, '源单编号');
+  }
+});
