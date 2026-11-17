@@ -7,6 +7,7 @@ import { initializeStorage, createDraft, getDraft, activateDraft, activeData, re
 import { refreshParsedVersions } from '../server/refresh-parsed.js';
 import { parseWorkbook } from '../server/parser.js';
 import { PARSER_VERSION } from '../shared/constants.js';
+import { buildDashboard } from '../server/dashboard.js';
 
 async function scheduleBuffer({ progress = false } = {}) {
   const book = new ExcelJS.Workbook();
@@ -46,6 +47,35 @@ function seedVersion(db, id, slotId, content, selectedSheets, current = true, pa
   if (current) db.prepare('UPDATE file_slots SET current_version_id=?, revision=revision+1, updated_at=?, updated_by=? WHERE id=?')
     .run(id, '2026-11-01T00:00:00.000Z', '合成上传人', slotId);
 }
+
+test('第8版当前和历史缓存补齐分期申请批注，恢复后沿用自身批注且原件不变', async t => {
+  const db = database(t);
+  const book = new ExcelJS.Workbook();
+  await book.xlsx.load(await scheduleBuffer());
+  const sheet = book.getWorksheet('谈判付款');
+  sheet.getCell('J1').value = '2026年11月16日';
+  sheet.getCell('J2').value = 100;
+  sheet.getCell('J2').note = '申请日期（付款节奏跟进）：2026年11月10日';
+  const history = Buffer.from(await book.xlsx.writeBuffer());
+  sheet.getCell('J2').note = undefined;
+  const current = Buffer.from(await book.xlsx.writeBuffer());
+  seedVersion(db, 'app-history', 'schedule', history, ['谈判付款', '正常付款'], false, 8);
+  seedVersion(db, 'app-current', 'schedule', current, ['谈判付款', '正常付款'], true, 8);
+  const originals = db.prepare('SELECT * FROM file_versions ORDER BY id').all();
+  assert.equal(await refreshParsedVersions(db), 2);
+  assert.deepEqual(db.prepare('SELECT * FROM file_versions ORDER BY id').all(), originals);
+  const currentRecord = activeData(db).records.find(record => record.category === 'negotiated');
+  assert.equal(currentRecord.applicationInstallments[0].sourceCell, 'J2');
+  assert.equal(buildDashboard([currentRecord]).records[0].selectedUnappliedUnpaidCents, 10000);
+  const historyRecord = versionDetails(db, 'schedule', 'app-history').records.find(record => record.category === 'negotiated');
+  assert.equal(buildDashboard([historyRecord]).records[0].selectedAppliedUnpaidCents, 10000);
+  const revision = listSlots(db).find(slot => slot.id === 'schedule').revision;
+  restoreVersion(db, 'schedule', 'app-history', revision, { actor: '合成验收用户' });
+  const restored = activeData(db).records.find(record => record.category === 'negotiated');
+  assert.equal(buildDashboard([restored]).records[0].selectedUnappliedUnpaidCents, 0);
+  assert.equal(await refreshParsedVersions(db), 0);
+  assert.deepEqual(db.prepare('SELECT * FROM file_versions ORDER BY id').all(), originals);
+});
 
 test('第6版当前及历史缓存升级后补齐申请别名和节点，不改变原文件及金额', async t => {
   const db = database(t);

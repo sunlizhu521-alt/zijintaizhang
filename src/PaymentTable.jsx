@@ -9,9 +9,9 @@ const measures = [['totalCents', '总金额'], ['paidCents', '已支付金额'],
 function detailRecords(records, selection) {
   if (!selection) return [];
   return records.filter(record => selection.categories.includes(record.category)).flatMap(record => {
-    if (selection.measure === 'unappliedUnpaidCents' && record.applicationState === 'applied') return [];
     const plans = (record.selectedPlans || record.plans || []).filter(plan =>
       (selection.month === 'period' ? Boolean(plan.month) : (plan.month || 'pending') === selection.month) &&
+      (selection.measure !== 'unappliedUnpaidCents' || plan.applicationState !== 'applied') &&
       (selection.measure === 'totalCents' || plan.amountCents === 0 || plan[selection.measure] == null || plan[selection.measure] !== 0));
     return plans.length ? [{ ...record, selectedPlans: plans, selectedPlanCents: plans.reduce((sum, plan) => sum + plan.amountCents, 0) }] : [];
   });

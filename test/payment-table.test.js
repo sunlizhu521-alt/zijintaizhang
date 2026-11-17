@@ -93,12 +93,12 @@ test('未提交申请单金额按每期未申请且未付汇总，父子、期�
   ];
   const data = buildDashboard(records, [], slots);
   const total = rowOf(data, 'total');
-  assert.deepEqual(data.paymentTable.months.map(month => total.cells[month].unappliedUnpaidCents), [650, 200, -20]);
+  assert.deepEqual(data.paymentTable.months.map(month => total.cells[month].unappliedUnpaidCents), [1100, 200, -20]);
   assert.equal(rowOf(data, 'negotiated_group').period.unappliedUnpaidCents, 800);
-  assert.equal(rowOf(data, 'normal_group').period.unappliedUnpaidCents, 30);
-  assert.equal(total.period.unappliedUnpaidCents, 830);
-  assert.equal(data.summary.unappliedUnpaidCents, 830);
-  assert.equal(data.records.reduce((sum, row) => sum + row.selectedUnappliedUnpaidCents, 0), 830);
+  assert.equal(rowOf(data, 'normal_group').period.unappliedUnpaidCents, 480);
+  assert.equal(total.period.unappliedUnpaidCents, 1280);
+  assert.equal(data.summary.unappliedUnpaidCents, 1280);
+  assert.equal(data.records.reduce((sum, row) => sum + row.selectedUnappliedUnpaidCents, 0), 1280);
   for (const month of data.paymentTable.months) {
     const plans = data.records.flatMap(row => row.selectedPlans).filter(p => p.month === month);
     assert.equal(paymentTableTotals(plans).unappliedUnpaidCents, total.cells[month].unappliedUnpaidCents);
@@ -106,7 +106,7 @@ test('未提交申请单金额按每期未申请且未付汇总，父子、期�
     assert.equal(childSum, total.cells[month].unappliedUnpaidCents);
   }
   assert.equal(data.pendingPaymentTable.rows.find(row => row.id === 'total').cells.pending.unappliedUnpaidCents, 50);
-  assert.equal(data.records.find(row => row.key === 'oa').selectedPlans[0].unappliedUnpaidCents, 0);
+  assert.equal(data.records.find(row => row.key === 'oa').selectedPlans[0].unappliedUnpaidCents, 450);
   assert.equal(data.records.find(row => row.key === 'submitted').selectedPlans[0].unappliedUnpaidCents, 0);
   assert.ok(records.every(row => row.plans.every(p => !Object.hasOwn(p, 'unappliedUnpaidCents'))), '只装饰查询结果，不改原始计划');
   const january = buildDashboard(records, [], slots, { from: '2027-01', to: '2027-01' });
@@ -120,7 +120,7 @@ test('未提交申请单金额按每期未申请且未付汇总，父子、期�
 });
 
 test('部分申请或未付未知按月保留待核对，已付清和真实零值不误报，跨月冲减不消除未知', () => {
-  const partial = { ...record('negotiated', [plan('2026-11', 100), plan('2026-12', -100), plan('2027-01', 20, 20), plan(null, 0)]), applicationStatus: '部分提交' };
+  const partial = { ...record('normal', [plan('2026-11', 100), plan('2026-12', -100), plan('2027-01', 20, 20), plan(null, 0)]), applicationStatus: '部分提交' };
   const data = buildDashboard([partial], [], slots);
   const total = rowOf(data, 'total');
   assert.deepEqual(data.records[0].selectedPlans.map(p => p.unappliedUnpaidCents), [null, null, 0]);
@@ -160,7 +160,8 @@ test('正常付款包含其余六个子类，月度和待定结构一致且总�
 
 test('导出的月度及待定汇总保留未提交申请单金额、真实零与待核对，金额以元输出', async () => {
   const data = buildDashboard([
-    { ...record('negotiated', [plan('2026-11', 100), plan('2026-12', 100, 100), plan(null, 20)]), applicationStatus: '部分提交' },
+    record('negotiated', [plan('2026-11', 100), plan('2026-12', 100, 100), plan(null, 20)]
+      .map(p => ({ ...p, sourceComment: '付款申请单：部分提交' }))),
     record('normal', [plan('2026-11', 5099, 1000), plan('2026-12', 0), plan(null, 50, 20)]),
   ], [], slots);
   const book = new ExcelJS.Workbook();

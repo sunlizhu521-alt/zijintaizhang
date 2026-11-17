@@ -103,12 +103,13 @@ test('供应商等条件影响期间金额，空结果不会丢失筛选选项',
   assert.equal(buildDashboard(records, [], [], { supplier: '无匹配' }).records.length, 0);
 });
 
-test('已提交状态或有效OA均算已申请，空值和占位值不算，期间明细与金额一致', () => {
+test('正常付款仅按申请单状态判断，有效OA不覆盖未提交、空值和待核对，期间明细一致', () => {
   const inputs = [
     ['是', '', true], ['已经提交全部', '', true], ['已提交', '', true], ['已申请', '', true],
-    ['已经提交部分', 'MDST-DGFK20261101004', true], ['未申请', 'MDST-DGFK20261101005', true],
-    ['未提交', 'mdst-dgfk20261101006', true], ['', 'MDST-DGFK20261101007', true],
+    ['已经提交全部', 'MDST-DGFK20261101004', true], ['未申请', 'MDST-DGFK20261101005', false],
+    ['未提交', 'mdst-dgfk20261101006', false], ['', 'MDST-DGFK20261101007', false],
     ['未申请', '', false], ['', '—', false], ['否', '未提供', false], ['待提交', '', false],
+    ['待核对（无流程号）', '', false], ['待核对', 'MDST-DGFK20261101008', false],
   ];
   const records = inputs.map(([applicationStatus, flowCode], i) => record(`r${i}`, 'normal',
     [plan('2026-11', 100 + i, 10), plan(null, 500)], { applicationStatus, flowCode, supplier: `供应商${i}` }));
@@ -130,11 +131,11 @@ test('已提交状态或有效OA均算已申请，空值和占位值不算，期
   });
   assert.deepEqual(data.records.map(row => row.applicationState), inputs.map(([, , yes]) => yes ? 'applied' : 'unapplied'));
   assert.equal(data.records[5].applicationStatus, '未申请');
-  assert.match(data.records[5].applicationBasis, /OA/);
+  assert.match(data.records[5].applicationBasis, /未申请/);
 });
 
-test('部分申请无OA无申请金额时列待核对，不推算申请额，未知付款拆分不会变零', () => {
-  const partial = record('p1', 'negotiated', [plan('2026-11', 100, 30)], { applicationStatus: '已经提交部分' });
+test('正常付款部分申请即使有OA仍待核对，不推算申请额，未知付款拆分不会变零', () => {
+  const partial = record('p1', 'normal', [plan('2026-11', 100, 30)], { applicationStatus: '已经提交部分', flowCode: 'MDST-DGFK20261101001' });
   const data = buildDashboard([partial]);
   assert.equal(data.summary.remainingCents, 70);
   assert.equal(data.summary.applicationReviewCents, 70);
@@ -150,7 +151,8 @@ test('部分申请无OA无申请金额时列待核对，不推算申请额，未
   assert.equal(paid.summary.appliedUnpaidCents, 0);
   assert.equal(paid.records[0].selectedAppliedUnpaidCents, 0);
   assert.equal(paid.records[0].selectedUnappliedUnpaidCents, 0);
-  const unknown = buildDashboard([record('u1', 'negotiated', [plan('2026-11', 200, null)], { applicationStatus: '已提交' })]);
+  const unknown = buildDashboard([record('u1', 'negotiated', [{ ...plan('2026-11', 200, null),
+    sourceComment: '申请日期（付款节奏跟进）：2026年11月2日' }], { applicationStatus: '未提交' })]);
   assert.equal(unknown.summary.planCents, 200);
   assert.equal(unknown.summary.paidCents, null);
   assert.equal(unknown.summary.remainingCents, null);

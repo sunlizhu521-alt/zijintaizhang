@@ -15,7 +15,8 @@ function value(sheet, label, header) {
 
 test('导出按新版期间统计且保留精确元、待定来源与未知付款拆分', async () => {
   const plans = [{ month: '2026-11', amountCents: 10001, paidCents: null, unpaidCents: null },
-    { month: null, amountCents: 321, paidCents: 0, unpaidCents: 321 }];
+    { month: null, amountCents: 321, paidCents: 0, unpaidCents: 321 }]
+    .map(plan => ({ ...plan, sourceComment: '申请日期（付款节奏跟进）：2026年11月2日' }));
   const record = { key: 'schedule:谈判付款:2', slotId: 'schedule', category: 'negotiated', supplier: '合成供应商',
     sourceSheet: '谈判付款', sourceRow: 2, amountCents: 10322, paidCents: 2500, remainingCents: 7822,
     applicationStatus: '是', flowCode: '', currentNode: '审核中', plans };

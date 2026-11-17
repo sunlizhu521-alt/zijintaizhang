@@ -1,6 +1,7 @@
 import { CATEGORIES, LEDGER_CATEGORIES } from '../shared/constants.js';
 import { buildPaymentTable, paymentPlanTotals, paymentTableTotals } from './payment-table.js';
 import { describeReviewIssue } from './review-issues.js';
+import { classifyPlanApplications, sumApplicationAmounts } from './payment-application.js';
 
 const MONTH = /^\d{4}-(0[1-9]|1[0-2])$/;
 const ledgerCategories = new Set(LEDGER_CATEGORIES);
@@ -90,32 +91,19 @@ function validateFilters(filters) {
   }
 }
 
-const submittedStatuses = new Set(['是', '已提交', '已申请', '已经提交', '已经申请', '已经提交全部',
-  '已提交全部', '全部已提交', '已全部提交', '全部已申请', '已全部申请', '已提交付款申请单']);
-
-function applicationOf(record) {
-  const flow = normalize(record.flowCode).toUpperCase();
-  if (/^[A-Z0-9_-]{6,}$/.test(flow) && /\d{5}/.test(flow)) {
-    return { applicationState: 'applied', applicationBasis: '已有有效付款 OA 号' };
-  }
-  const status = normalize(record.applicationStatus);
-  if (submittedStatuses.has(status)) return { applicationState: 'applied', applicationBasis: `申请状态为“${record.applicationStatus}”` };
-  if (/部分/.test(status) && /提交|申请/.test(status)) {
-    return { applicationState: 'review', applicationBasis: '仅标记部分申请，且无有效付款 OA 号或对应申请金额；申请金额待核对' };
-  }
-  return { applicationState: 'unapplied', applicationBasis: '未确认已提交申请，且无有效付款 OA 号' };
-}
-
 function scopedRecord(record, plans) {
-  const application = applicationOf(record);
-  const selectedPlans = plans.map(plan => ({ ...plan, unappliedUnpaidCents:
-    application.applicationState === 'review' && plan.unpaidCents !== 0 ? null
-      : application.applicationState === 'unapplied' ? plan.unpaidCents : 0 }));
+  const selectedPlans = classifyPlanApplications(record, plans);
   const totals = paymentTableTotals(selectedPlans);
-  const applicationUnknown = application.applicationState === 'review' && totals.unappliedUnpaidCents === null;
-  return { ...record, ...application, selectedPlans, selectedPlanCents: totals.totalCents,
+  const states = new Set(selectedPlans.map(plan => plan.applicationState));
+  const applicationState = states.has('review') ? 'review' : states.size === 1 ? [...states][0] : 'partial';
+  const applicationEvidence = [...new Map(selectedPlans.flatMap(plan => plan.applicationEvidence)
+    .map(item => [JSON.stringify([item.sourceCell, item.amountCents, item.comment]), item])).values()];
+  return { ...record, applicationState,
+    applicationBasis: selectedPlans.map(plan => `${plan.month || '时间待定'}：${plan.applicationBasis}`).join('\n'),
+    applicationEvidence, applicationDates: [...new Set(selectedPlans.flatMap(plan => plan.applicationDates))],
+    selectedPlans, selectedPlanCents: totals.totalCents,
     selectedPaidCents: totals.paidCents, selectedUnpaidCents: totals.unpaidCents,
-    selectedAppliedUnpaidCents: applicationUnknown ? null : application.applicationState === 'applied' ? totals.unpaidCents : 0,
+    selectedAppliedUnpaidCents: sumApplicationAmounts(selectedPlans, 'appliedUnpaidCents'),
     selectedUnappliedUnpaidCents: totals.unappliedUnpaidCents };
 }
 
@@ -151,14 +139,14 @@ export function buildDashboard(records, issues = [], slots = [], filters = {}) {
   const pendingRecords = pending ? selectedRecords : select(month => month === null);
   const plans = selectedRecords.flatMap(record => record.selectedPlans);
   const totals = paymentPlanTotals(plans);
-  const applicationReviewRecords = selectedRecords.filter(record => record.applicationState === 'review' && record.selectedUnappliedUnpaidCents === null);
-  const appliedPlans = selectedRecords.filter(record => record.applicationState === 'applied').flatMap(record => record.selectedPlans);
+  const applicationReviewRecords = selectedRecords.filter(record => record.selectedPlans.some(plan => plan.applicationState === 'review' && plan.unappliedUnpaidCents === null));
   const summary = {
     planCents: totals.totalCents, paidCents: totals.paidCents, remainingCents: totals.unpaidCents,
-    appliedUnpaidCents: applicationReviewRecords.length ? null : paymentPlanTotals(appliedPlans).unpaidCents,
+    appliedUnpaidCents: sumApplicationAmounts(plans, 'appliedUnpaidCents'),
     unappliedUnpaidCents: paymentTableTotals(plans).unappliedUnpaidCents,
     applicationReviewCount: applicationReviewRecords.length,
-    applicationReviewCents: paymentPlanTotals(applicationReviewRecords.flatMap(record => record.selectedPlans)).unpaidCents,
+    applicationReviewCents: paymentPlanTotals(applicationReviewRecords.flatMap(record => record.selectedPlans)
+      .filter(plan => plan.applicationState === 'review' && plan.unappliedUnpaidCents === null)).unpaidCents,
     uncertainCount: totals.uncertainCount,
     forecastCents: { shipment: 0, after_sales: 0, unregistered: 0 },
     pendingPlanCents: 0, pendingForecastCents: { shipment: 0, after_sales: 0, unregistered: 0 },
@@ -235,7 +223,7 @@ export function buildDashboard(records, issues = [], slots = [], filters = {}) {
       .slice(0, 10).map(({ supplier, unpaidCents, uncertainCount }) => ({ supplier, unpaidCents, uncertainCount })),
     monthlyTrend: months.filter(row => row.month !== 'pending').map(({ month }) => ({ month,
       ...paymentPlanTotals(plans.filter(plan => plan.month === month)) })),
-    appliedUnpaidRecords: selectedRecords.filter(record => record.applicationState === 'applied' && record.selectedUnpaidCents !== 0),
+    appliedUnpaidRecords: selectedRecords.filter(record => record.selectedAppliedUnpaidCents !== 0 && record.selectedAppliedUnpaidCents !== null),
     reviewSuppliers: [...reviews.values()],
     issues: uniqueIssues,
     options: { suppliers: option('supplier'), payers: option('payer'), owners: option('owner'),

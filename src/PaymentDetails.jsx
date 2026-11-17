@@ -21,12 +21,19 @@ function Evidence({ record, plan }) {
       ['供应商 / 付款主体', `${record.supplier || '—'} / ${record.payer || '—'}`],
       ['类别 / 跟单员', `${CATEGORIES[record.category] || '—'} / ${record.owner || '—'}`],
       ['摘要', record.summary], ['谈判明细', supplierRecordDetails(record).negotiation],
-      ['付款 OA 号', record.flowCode], ['付款申请状态', record.applicationStatus], ['申请判定依据', record.applicationBasis], ['流程状态', record.status],
+      ['付款 OA 号', record.flowCode], ['原表申请状态', record.applicationStatus],
+      ['申请判定依据', plan.applicationBasis], ['批注申请日期', plan.applicationDates?.join('、')], ['流程状态', record.status],
       ['当前节点', record.currentNode || record.raw?.['当前节点']],
       ['来源文件', record.filename], ['原表位置', `${record.sourceSheet} · 第 ${record.sourceRow} 行${plan.sourceCell ? ` · ${plan.sourceCell}` : ''}`],
       ['备注', record.notes],
       ...(plan.paymentProgressVersion ? [['付款依据版本', `${plan.paymentProgressVersion.filename} · ${plan.paymentProgressVersion.id?.slice(0, 8) || ''}`]] : []),
     ]} />
+    {plan.applicationEvidence?.map((evidence, index) => <FieldsTable key={`application-${index}`} label={`第${index + 1}条申请依据`} fields={[
+      ['申请依据位置', `${record.sourceSheet || ''} · ${evidence.sourceCell || `第 ${record.sourceRow} 行`}`],
+      ['该批金额（万元）', moneyInWan(evidence.amountCents)],
+      ['申请单判定', ({ applied: '已提交', unapplied: '未提交', partial: '部分已提交', review: '待核对' })[evidence.applicationState]],
+      ['批注申请日期', evidence.applicationDates?.join('、')], ['申请批注原文', evidence.comment || '无申请批注'],
+    ]} />)}
     {plan.paymentEvidence?.map((evidence, index) => <FieldsTable key={index} label={`第${index + 1}条付款依据`} fields={[
       [`依据 ${index + 1} 位置`, `${evidence.sourceSheet || record.sourceSheet || ''}${evidence.sourceRow ? ` · 第 ${evidence.sourceRow} 行` : ''}${evidence.sourceCell ? ` · ${evidence.sourceCell}` : ''}`],
       ['依据金额（万元）', moneyInWan(evidence.amountCents)],

@@ -31,7 +31,7 @@ test('分期批注经上传持久化、父子汇总及导出后已付未付一�
   const query = '?from=2026-11&to=2026-11';
   const dashboard = (await f.request(`/dashboard${query}`, { session: admin })).data;
   const total = dashboard.paymentTable.rows.find(row => row.id === 'total');
-  assert.deepEqual(total.cells['2026-11'], { paidCents: 35000, unpaidCents: 51000, totalCents: 86000, uncertainCount: 0, unappliedUnpaidCents: 6000 });
+  assert.deepEqual(total.cells['2026-11'], { paidCents: 35000, unpaidCents: 51000, totalCents: 86000, uncertainCount: 0, unappliedUnpaidCents: 51000 });
   const negotiated = dashboard.records.find(row => row.category === 'negotiated');
   assert.equal(negotiated.selectedPaidCents, 15000);
   assert.equal(negotiated.selectedUnpaidCents, 45000);
@@ -43,7 +43,7 @@ test('分期批注经上传持久化、父子汇总及导出后已付未付一�
   assert.equal(valueByHeader(monthly, rowByLabel(monthly, '总合计'), '2026-11已付（元）'), 350);
   assert.equal(valueByHeader(monthly, rowByLabel(monthly, '总合计'), '2026-11未付（元）'), 510);
   assert.equal(valueByHeader(monthly, rowByLabel(monthly, '总合计'), '所选期间合计（元）'), 860);
-  assert.equal(valueByHeader(monthly, rowByLabel(monthly, '总合计'), '2026-11未提交申请单金额（元）'), 60);
+  assert.equal(valueByHeader(monthly, rowByLabel(monthly, '总合计'), '2026-11未提交申请单金额（元）'), 510);
   assert.equal(valueByHeader(monthly, rowByLabel(monthly, '总合计'), '所选期间未提交申请单金额（元）'), dashboard.summary.unappliedUnpaidCents / 100);
   const details = book.getWorksheet('筛选明细');
   assert.equal(valueByHeader(details, 2, '选定范围已付（新规则）'), 150);
@@ -54,13 +54,13 @@ test('分期批注经上传持久化、父子汇总及导出后已付未付一�
   assert.equal(valueByHeader(metrics, rowByLabel(metrics, '期间计划（含预估）'), '金额或说明'), dashboard.summary.planCents / 100);
   assert.equal(valueByHeader(metrics, rowByLabel(metrics, '期间已付'), '金额或说明'), dashboard.summary.paidCents / 100);
   assert.equal(valueByHeader(metrics, rowByLabel(metrics, '期间未付'), '金额或说明'), dashboard.summary.remainingCents / 100);
-  assert.equal(valueByHeader(metrics, rowByLabel(metrics, '已申请未付'), '金额或说明'), 450);
+  assert.equal(valueByHeader(metrics, rowByLabel(metrics, '已申请未付'), '金额或说明'), 0);
   const paymentDetails = book.getWorksheet('付款明细');
   assert.equal(paymentDetails.rowCount, dashboard.records.length + 1);
   assert.equal(valueByHeader(paymentDetails, 2, '总金额（元）'), 600);
-  assert.equal(valueByHeader(paymentDetails, 2, '已申请未付金额（元）'), 450);
-  assert.equal(valueByHeader(paymentDetails, 2, '未申请金额（元）'), 0);
-  assert.match(valueByHeader(paymentDetails, 2, '申请判定依据'), /OA/);
+  assert.equal(valueByHeader(paymentDetails, 2, '已申请未付金额（元）'), 0);
+  assert.equal(valueByHeader(paymentDetails, 2, '未申请金额（元）'), 450);
+  assert.match(valueByHeader(paymentDetails, 2, '申请判定依据'), /未提交/);
   assert.equal(valueByHeader(paymentDetails, 3, '总金额（元）'), 200);
   assert.equal(valueByHeader(paymentDetails, 3, '已申请未付金额（元）'), 0);
   assert.equal(valueByHeader(paymentDetails, 3, '未申请金额（元）'), 0);
@@ -70,6 +70,56 @@ test('分期批注经上传持久化、父子汇总及导出后已付未付一�
     const total = paymentDetails.getRows(2, dashboard.records.length).reduce((sum, row) => sum + valueByHeader(paymentDetails, row.number, header), 0);
     assert.equal(total, cents / 100);
   }
+});
+
+test('申请批注按金额格逐批统计，跨月汇总、导出、重启和恢复同一口径', async t => {
+  const f = await appFixture(t);
+  const admin = await f.login();
+  const source = new ExcelJS.Workbook(); await source.xlsx.load(await syntheticSchedule());
+  const sheet = source.getWorksheet('谈判付款');
+  for (const [column, date, amount, comment] of [
+    ['P', '2026年11月2日', 150, '申请日期（付款节奏跟进）：2026年11月2日\n付款时间（付款节奏跟进）：2026年11月5日'],
+    ['Q', '2026年11月16日', 200, '申请日期（付款节奏跟进）：2026年11月10日'],
+    ['R', '2026年11月30日', 250, ''],
+    ['S', '2026年12月14日', 400, ''],
+  ]) {
+    sheet.getCell(`${column}1`).value = date;
+    sheet.getCell(`${column}2`).value = amount;
+    if (comment) sheet.getCell(`${column}2`).note = comment;
+  }
+  const normal = source.getWorksheet('正常付款');
+  normal.getCell('L1').value = '是否提交付款申请单';
+  normal.getCell('L2').value = '未提交';
+  normal.getCell('L3').value = '未提交';
+  const initial = await f.upload('schedule', Buffer.from(await source.xlsx.writeBuffer()), admin, '逐批申请_V1.xlsx');
+  const query = '?from=2026-11&to=2026-12';
+  const read = async () => (await f.request(`/dashboard${query}`, { session: admin })).data;
+  const data = await read();
+  const negotiated = data.records.find(record => record.category === 'negotiated');
+  assert.equal(negotiated.applicationState, 'partial');
+  assert.deepEqual(negotiated.selectedPlans.map(plan => [plan.month, plan.appliedUnpaidCents, plan.unappliedUnpaidCents]),
+    [['2026-11', 20000, 25000], ['2026-12', 0, 40000]]);
+  assert.ok(negotiated.selectedPlans[0].applicationEvidence.some(evidence => evidence.sourceCell === 'Q2' && evidence.amountCents === 20000));
+  assert.equal(data.summary.appliedUnpaidCents, 20000);
+  assert.equal(data.summary.unappliedUnpaidCents, 95000);
+  assert.equal(data.summary.appliedUnpaidCents + data.summary.unappliedUnpaidCents, data.summary.remainingCents);
+  assert.deepEqual(data.appliedUnpaidRecords.map(record => record.key), [negotiated.key]);
+  const exported = new ExcelJS.Workbook();
+  await exported.xlsx.load((await f.request(`/dashboard/export${query}`, { session: admin })).bytes);
+  assert.equal(valueByHeader(exported.getWorksheet('付款明细'), 2, '已申请未付金额（元）'), 200);
+  assert.equal(valueByHeader(exported.getWorksheet('付款明细'), 2, '未申请金额（元）'), 650);
+  const monthly = exported.getWorksheet('月度付款汇总');
+  assert.equal(valueByHeader(monthly, rowByLabel(monthly, '总合计'), '2026-11未提交申请单金额（元）'), 250);
+  assert.equal(valueByHeader(monthly, rowByLabel(monthly, '总合计'), '2026-12未提交申请单金额（元）'), 700);
+  await f.restart();
+  assert.deepEqual((await read()).paymentTable, data.paymentTable);
+  sheet.getCell('Q2').note = '';
+  const replacement = await f.upload('schedule', Buffer.from(await source.xlsx.writeBuffer()), admin, '逐批申请_V2.xlsx');
+  assert.equal((await read()).summary.appliedUnpaidCents, 0);
+  const restored = await f.request('/files/schedule/restore', { method: 'POST', session: admin,
+    body: { versionId: initial.versionId, baseRevision: replacement.activated.data.slot.revision } });
+  assert.equal(restored.status, 200, JSON.stringify(restored.data));
+  assert.deepEqual((await read()).paymentTable, data.paymentTable);
 });
 
 
@@ -111,7 +161,7 @@ test('正常付款预估日期经上传归月，六项子类含预估、下钻�
   assert.equal(valueByHeader(monthly, rowByLabel(monthly, '总合计'), '所选期间合计（元）'), 1250);
   const pending = output.getWorksheet('时间待定付款汇总');
   assert.equal(valueByHeader(pending, rowByLabel(pending, '正常付款-未完成对账'), '时间待定未付（元）'), 300);
-  assert.equal(valueByHeader(pending, rowByLabel(pending, '正常付款-未完成对账'), '时间待定未提交申请单金额（元）'), 0);
+  assert.equal(valueByHeader(pending, rowByLabel(pending, '正常付款-未完成对账'), '时间待定未提交申请单金额（元）'), 300);
   assert.equal(data.records.length, 3);
   assert.equal(data.pendingRecords.length, 1);
   assert.equal(output.getWorksheet('筛选明细').rowCount, 4);

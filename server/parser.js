@@ -375,17 +375,20 @@ export async function parseWorkbook(buffer, { slotId, selectedSheets, allowLegac
       }
       const settled = getText(['是否结清']);
       const status = getText(['流程状态']);
-      const installments = [];
+      const installments = [], applicationInstallments = [];
       if (sourceCategory === 'negotiated') {
         for (const header of headers) {
           if (!/^(?:\d{4}年)?\d{1,2}月\d{1,2}日$/.test(header.name)) continue;
           const cell = row.getCell(header.column);
           const comment = noteOf(cell);
           const state = commentPaymentState(comment);
-          if (state === 'none') continue;
+          const hasFormula = cell.value && typeof cell.value === 'object' && ('formula' in cell.value || 'sharedFormula' in cell.value);
+          if (state === 'none' && !hasFormula && textOf(cell) === '' && !comment) continue;
           const value = money(header.column);
           if (value === null) continue;
-          installments.push({ month: parseDate(header.name)?.month ?? null, amountCents: value, sourceCell: cell.address, comment, state });
+          const installment = { month: parseDate(header.name)?.month ?? null, amountCents: value, sourceCell: cell.address, comment, state };
+          applicationInstallments.push(installment);
+          if (state !== 'none') installments.push(installment);
         }
       }
       classifyPlanPayments({ category, plans, installments, warn });
@@ -405,7 +408,7 @@ export async function parseWorkbook(buffer, { slotId, selectedSheets, allowLegac
         amountCents, paidCents, remainingCents, status, settled,
         applicationStatus: getText(['是否提交付款申请单', '是否已申请', '是否申请']),
         currentNode: getText(['当前节点']), dueDate: date?.date ?? null,
-        notes: notes.join('\n'), plans, raw, comments,
+        notes: notes.join('\n'), plans, raw, comments, ...(sourceCategory === 'negotiated' ? { applicationInstallments } : {}),
       });
       if (records.length > MAX_RECORDS) throw invalid('文件有效记录超过 100,000 条，请拆分后上传。');
     });
