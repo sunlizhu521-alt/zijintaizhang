@@ -1,7 +1,7 @@
 import test from 'node:test';
 import { randomUUID } from 'node:crypto';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { cpSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import ExcelJS from 'exceljs';
@@ -13,10 +13,17 @@ import { parseRatingSuppliers } from '../server/rating-excel.js';
 const base = '/gongyingshangpingji/api';
 async function fixture(t) {
   const dir = mkdtempSync(join(tmpdir(), 'supplier-rating-'));
+  // Route tests must also work in a fresh checkout before the frontend build.
+  const distDir = join(dir, 'dist');
+  mkdirSync(join(distDir, 'gongyingshangpingji/assets'), { recursive: true });
+  cpSync(new URL('../public/jihuaguanli/', import.meta.url), join(distDir, 'jihuaguanli'), { recursive: true });
+  writeFileSync(join(distDir, 'index.html'), '<html><head><title>资金台账</title></head><body></body></html>');
+  writeFileSync(join(distDir, 'gongyingshangpingji/index.html'), '<html><head><title>供应商评级</title></head><body><script src="/gongyingshangpingji/assets/rating.js"></script></body></html>');
+  writeFileSync(join(distDir, 'gongyingshangpingji/assets/rating.js'), '/* rating route fixture */');
   const db = openDatabase(join(dir, 'funds.sqlite')), ratingDb = openDatabase(join(dir, 'rating.sqlite'));
   await initAdmin(db, { username: 'admin', displayName: '资金管理员', password: 'Admin12' });
   await initAdmin(ratingDb, { username: 'admin', displayName: '评级管理员', password: 'Rating12' });
-  const app = createApp({ db, ratingDb });
+  const app = createApp({ db, ratingDb, distDir });
   const server = await new Promise(resolve => { const s = app.listen(0, '127.0.0.1', () => resolve(s)); });
   const origin = `http://127.0.0.1:${server.address().port}`;
   t.after(async () => { await new Promise(r => server.close(r)); db.close(); ratingDb.close(); rmSync(dir, { recursive: true, force: true }); });
@@ -50,6 +57,9 @@ test('评级账号会话、来源、CSRF和财务完全隔离；独立路由资�
   assert.equal((await f.request('/zijintaizhang/api/auth/session', { session: funds })).status, 200);
   const page = await fetch(f.origin + '/gongyingshangpingji/');
   assert.equal(page.status, 200); const html = await page.text(); assert.match(html, /<title>供应商评级<\/title>/); assert.match(html, /\/gongyingshangpingji\/assets\//);
+  const redirect = await fetch(f.origin + '/gongyingshangpingji', { redirect: 'manual' });
+  assert.equal(redirect.status, 308); assert.equal(redirect.headers.get('location'), '/gongyingshangpingji/');
+  assert.equal(await (await fetch(f.origin + '/gongyingshangpingji/assets/rating.js')).text(), '/* rating route fixture */');
   assert.equal((await fetch(f.origin + '/zijintaizhang/')).status, 200);
   assert.equal((await fetch(f.origin + '/caigoudingdangenjin/')).status, 200);
   assert.equal((await fetch(f.origin + '/jihuaguanli/')).status, 200);
