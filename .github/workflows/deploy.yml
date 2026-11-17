@@ -160,3 +160,12 @@ jobs:
           const html = fs.readFileSync(`${process.env.RUNNER_TEMP}/zijintaizhang-home.html`, 'utf8');
           if (!html.includes('<title>资金台账</title>') || !html.includes('/zijintaizhang/assets/')) throw new Error('Public homepage check failed');
           NODE
+          curl --fail --silent --show-error --max-time 15 \
+            'https://129.211.9.242/gongyingshangjiaofu/' > "$RUNNER_TEMP/delivery-home.html"
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          const html = fs.readFileSync(`${process.env.RUNNER_TEMP}/delivery-home.html`, 'utf8');
+          if (!html.includes('<title>供应商交付管理</title>') || !html.includes('/zijintaizhang/assets/')) throw new Error('Independent delivery page check failed');
+          const response = await fetch('https://129.211.9.242/zijintaizhang/api/delivery/dashboard');
+          if (response.status !== 401) throw new Error('Delivery API must require authentication');
+          NODE

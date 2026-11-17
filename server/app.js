@@ -4,9 +4,10 @@ import multer from 'multer';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { existsSync, readFileSync } from 'node:fs';
-import { API_PATH, BASE_PATH, MAX_UPLOAD_BYTES, ORDER_SLOT } from '../shared/constants.js';
+import { API_PATH, BASE_PATH, MAX_UPLOAD_BYTES, ORDER_SLOT, DELIVERY_SLOTS } from '../shared/constants.js';
 import { createAuth } from './auth.js';
 import { initializePlanner, createPlannerRouter } from './planner.js';
+import { initializeDelivery, createDeliveryRouter } from './delivery.js';
 import { audit, serializeAudit } from './db.js';
 import { buildDashboard } from './dashboard.js';
 import { runParser } from './parse-job.js';
@@ -69,6 +70,7 @@ function logQuery(db, query, all = false) {
 export function createApp({ db, secureCookies = false, publicOrigin = '', trustProxy = false, distDir = distDefault } = {}) {
   initializeStorage(db);
   initializePlanner(db);
+  initializeDelivery(db);
   const app = express(); app.disable('x-powered-by'); app.set('trust proxy', trustProxy);
   const auth = createAuth(db, { secureCookies });
   app.use(helmet({ contentSecurityPolicy: { directives: {
@@ -110,6 +112,7 @@ export function createApp({ db, secureCookies = false, publicOrigin = '', trustP
   api.use('/planner', createPlannerRouter(db));
   api.use('/users', auth.userRouter);
   const permission = auth.requirePermission;
+  api.use('/delivery', createDeliveryRouter(db, permission));
   const dashboard = query => { const data = activeData(db); return buildDashboard(data.records, data.issues, data.slots, filtersFrom(query)); };
   api.get('/dashboard', permission('dashboard'), (req, res) => res.json(dashboard(req.query)));
   api.get('/dashboard/export', permission('dashboard'), permission('export'), async (req, res) => {
@@ -122,7 +125,11 @@ export function createApp({ db, secureCookies = false, publicOrigin = '', trustP
   api.get('/files', permission('files'), (req, res) => res.json({ slots: listSlots(db) }));
   api.get('/orders', permission('files'), (req, res) => res.json({ slots: listSlots(db, [ORDER_SLOT]) }));
   const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: MAX_UPLOAD_BYTES, files: 1, fields: 0, parts: 1 },
-    fileFilter(req, file, cb) { cb(/\.xlsx$/i.test(file.originalname) ? null : fail(422, '仅支持 .xlsx 文件'), /\.xlsx$/i.test(file.originalname)); } });
+    fileFilter(req, file, cb) {
+      const delivery = DELIVERY_SLOTS.some(slot => slot.id === req.params.slotId);
+      const accepted = (delivery ? /\.xlsx?$/i : /\.xlsx$/i).test(file.originalname);
+      cb(accepted ? null : fail(422, delivery ? '仅支持 .xls 或 .xlsx 文件' : '仅支持 .xlsx 文件'), accepted);
+    } });
   api.post('/files/:slotId/preview', permission('files'), permission('upload'), (req, res, next) => { requireSlot(db, req.params.slotId); next(); },
     upload.single('file'), async (req, res) => {
       if (!req.file) throw fail(422, '请选择 Excel 文件');
@@ -156,7 +163,7 @@ export function createApp({ db, secureCookies = false, publicOrigin = '', trustP
   api.get('/files/:slotId/versions/:versionId/download', permission('files'), permission('download'), (req, res) => {
     const version = getVersion(db, req.params.slotId, req.params.versionId);
     audit(db, { ...requestEvent(req), kind: 'operation', action: '下载原始文件', target: version.id, outcome: 'success', details: { slotId: req.params.slotId, filename: version.filename } });
-    res.attachment(version.filename).type('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet').send(Buffer.from(version.content));
+    res.attachment(version.filename).type(/\.xls$/i.test(version.filename) ? 'application/vnd.ms-excel' : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet').send(Buffer.from(version.content));
   });
   api.post('/files/:slotId/restore', permission('files'), permission('restore'), (req, res) => {
     res.json(restoreVersion(db, req.params.slotId, req.body.versionId, req.body.baseRevision, requestEvent(req)));
@@ -189,6 +196,13 @@ export function createApp({ db, secureCookies = false, publicOrigin = '', trustP
     app.get(/^\/caigoudingdangenjin\/?$/, (req, res) => {
       if (!req.path.endsWith('/')) return res.redirect(308, '/caigoudingdangenjin/');
       res.set('Cache-Control', 'no-store').type('html').send(ordersHtml);
+    });
+    const deliveryHtml = readFileSync(path.join(distDir, 'index.html'), 'utf8')
+      .replace(/<title>[^<]*<\/title>/, '<title>供应商交付管理</title>')
+      .replace(/(<meta\s+name="description"\s+content=")[^"]*(")/, '$1供应商生产发货跟进、交付预警与指标看板$2');
+    app.get(/^\/gongyingshangjiaofu\/?$/, (req, res) => {
+      if (!req.path.endsWith('/')) return res.redirect(308, '/gongyingshangjiaofu/');
+      res.set('Cache-Control', 'no-store').type('html').send(deliveryHtml);
     });
     app.use(BASE_PATH, express.static(distDir, { index: 'index.html', dotfiles: 'deny', maxAge: 0 }));
     app.get(BASE_PATH, (req, res) => res.redirect(`${BASE_PATH}/`));

@@ -6,10 +6,12 @@ import { Empty, ErrorNotice, Loading, Modal, Notice } from './components.jsx';
 import Dashboard from './Dashboard.jsx';
 import Files from './Files.jsx';
 import System from './System.jsx';
+import Delivery from './Delivery.jsx';
 
 const ordersPage = window.location.pathname.replace(/\/$/, '') === '/caigoudingdangenjin';
-const appTitle = ordersPage ? '采购订单跟进' : '资金台账';
-const authClass = ordersPage ? 'auth-page' : 'auth-page funds-auth';
+const deliveryPage = window.location.pathname.replace(/\/$/, '') === '/gongyingshangjiaofu';
+const appTitle = deliveryPage ? '供应商交付管理' : ordersPage ? '采购订单跟进' : '资金台账';
+const authClass = deliveryPage ? 'auth-page delivery-auth' : ordersPage ? 'auth-page' : 'auth-page funds-auth';
 
 export default function App() {
   const [session, setSession] = useState(null);
@@ -40,6 +42,7 @@ export default function App() {
   if (!session?.user) return <Login onLogin={loggedIn} sessionError={error} />;
   const user = session.user;
   if (user.mustChangePassword) return <div className={authClass}><section className="auth-card"><Brand /><h1>请设置自己的密码</h1><p className="subtitle">首次登录或管理员重置后，需要修改密码才能使用系统。</p><PasswordForm onSaved={loggedIn} /><button className="text-button auth-logout" onClick={logout} disabled={loggingOut}>退出登录</button><ErrorNotice error={error} /></section></div>;
+  if (deliveryPage) return <div className="delivery-shell"><Delivery user={user} onPassword={() => setChangingPassword(true)} onLogout={logout} loggingOut={loggingOut} sessionError={error} />{changingPassword && <Modal title="修改密码" onClose={() => setChangingPassword(false)}><PasswordForm onSaved={result => { loggedIn(result); setChangingPassword(false); }} /></Modal>}</div>;
   const navigation = ordersPage ? (can(user, 'files') ? [{ id: 'orders', label: '采购订单跟进', mark: '▤' }] : []) : [
     ...(can(user, 'dashboard') ? [{ id: 'dashboard', label: '资金简报', mark: '▥' }] : []),
     ...(can(user, 'files') ? [{ id: 'files', label: '文件管理', mark: '▤' }] : []),
@@ -54,7 +57,7 @@ export default function App() {
   </div>;
 }
 
-function Brand() { return <div className="brand"><span className="brand-mark" aria-hidden="true">{ordersPage ? '▤' : '¥'}</span><span>{appTitle}<small>{ordersPage ? '金蝶采购订单' : '付款计划管理'}</small></span></div>; }
+function Brand() { return <div className="brand"><span className="brand-mark" aria-hidden="true">{deliveryPage ? '▥' : ordersPage ? '▤' : '¥'}</span><span>{appTitle}<small>{deliveryPage ? '订单 · 生产 · 交付' : ordersPage ? '金蝶采购订单' : '付款计划管理'}</small></span></div>; }
 
 function Login({ onLogin, sessionError }) {
   const [initialized, setInitialized] = useState(null);
@@ -69,7 +72,7 @@ function Login({ onLogin, sessionError }) {
     catch (err) { setError(err); setPassword(''); }
     finally { setBusy(false); }
   }
-  return <div className={authClass}><section className="auth-card"><Brand /><h1>登录{appTitle}</h1><p className="subtitle">{ordersPage ? '使用资金台账的账号登录，沿用现有文件操作权限。' : '使用管理员为你创建的账号登录。'}</p><ErrorNotice error={error || sessionError} />{initialized === false ? <Notice>系统尚未初始化。请管理员先在服务器完成首个账号设置，随后刷新本页。</Notice> : initialized == null && !error ? <Loading /> : <form onSubmit={submit} className="form-stack"><label>账号<input required name="username" autoComplete="username" maxLength={64} value={username} onChange={event => setUsername(event.target.value)} autoFocus /></label><label>密码<input type="password" required name="password" autoComplete="current-password" maxLength={PASSWORD_MAX_LENGTH * 2} value={password} onChange={event => setPassword(event.target.value)} /></label><button className="primary login-button" disabled={busy}>{busy ? '正在登录…' : '登录'}</button></form>}<p className="auth-footnote">文件、版本和操作记录在服务器保存。</p></section></div>;
+  return <div className={authClass}><section className="auth-card"><Brand /><h1>登录{appTitle}</h1><p className="subtitle">{deliveryPage || ordersPage ? '使用资金台账的账号登录，沿用现有操作权限。' : '使用管理员为你创建的账号登录。'}</p><ErrorNotice error={error || sessionError} />{initialized === false ? <Notice>系统尚未初始化。请管理员先在服务器完成首个账号设置，随后刷新本页。</Notice> : initialized == null && !error ? <Loading /> : <form onSubmit={submit} className="form-stack"><label>账号<input required name="username" autoComplete="username" maxLength={64} value={username} onChange={event => setUsername(event.target.value)} autoFocus /></label><label>密码<input type="password" required name="password" autoComplete="current-password" maxLength={PASSWORD_MAX_LENGTH * 2} value={password} onChange={event => setPassword(event.target.value)} /></label><button className="primary login-button" disabled={busy}>{busy ? '正在登录…' : '登录'}</button></form>}<p className="auth-footnote">文件、版本和操作记录在服务器保存。</p></section></div>;
 }
 
 function PasswordForm({ onSaved }) {

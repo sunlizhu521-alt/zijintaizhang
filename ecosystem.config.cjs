@@ -14,7 +14,7 @@ module.exports = {
     name: 'zijintaizhang', cwd: __dirname, script: path.join(__dirname, 'server/index.js'),
     interpreter: path.join(__dirname, 'runtime/node'), node_args: '--max-old-space-size=256',
     instances: 1, exec_mode: 'fork', autorestart: true, min_uptime: 10000,
-    max_restarts: 10, restart_delay: 2000, kill_timeout: 10000, max_memory_restart: '384M',
+    max_restarts: 10, restart_delay: 2000, kill_timeout: 10000, max_memory_restart: '640M',
     out_file: path.join(projectRoot, 'shared/logs/out.log'),
     error_file: path.join(projectRoot, 'shared/logs/error.log'),
     merge_logs: true, log_date_format: 'YYYY-MM-DD HH:mm:ss Z',

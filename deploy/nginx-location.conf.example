@@ -1,5 +1,21 @@
 # Add only these locations inside the existing HTTPS server block for 129.211.9.242.
 # Keep the existing root proxy, certificates, and all other project locations.
+location = /gongyingshangjiaofu {
+    return 308 /gongyingshangjiaofu/;
+}
+
+location ^~ /gongyingshangjiaofu/ {
+    proxy_pass http://127.0.0.1:4010;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $remote_addr;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_connect_timeout 5s;
+    proxy_read_timeout 60s;
+    proxy_send_timeout 60s;
+}
+
 location = /zijintaizhang {
     return 308 /zijintaizhang/;
 }

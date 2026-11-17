@@ -130,6 +130,12 @@ export function versionDetails(db, slotId, id) {
   const cached = db.prepare('SELECT parsed_json,record_count,issue_count FROM file_parse_cache WHERE version_id=? AND parser_version=?')
     .get(id, PARSER_VERSION);
   const parsed = JSON.parse(cached?.parsed_json ?? row.parsed_json);
+  if (parsed.kind === 'delivery') return {
+    version: versionInfo({ ...row, ...cached, current: requireSlot(db, slotId).current_version_id === id }),
+    kind: 'delivery', selectedSheets: parsed.selectedSheets,
+    records: parsed.records.map(r => ({ ...r, filename: row.filename, versionId: row.id, slotId })),
+    issues: parsed.issues.map(i => ({ ...i, versionId: row.id, slotId })),
+  };
   const context = slotId === 'schedule' ? { progress: parsed.paymentProgress, source: progressVersion(row) } :
     parsed.kind === 'archive' ? { progress: null, source: null } : currentProgress(db);
   const resolved = resolveProgressPayments(parsed.records.map(r => ({ ...r, filename: row.filename, versionId: row.id, slotId })), context.progress, context.source);

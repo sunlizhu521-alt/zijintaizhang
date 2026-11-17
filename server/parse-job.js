@@ -1,5 +1,6 @@
 import { Worker } from 'node:worker_threads';
 import { fail } from './storage.js';
+import { DELIVERY_SLOTS } from '../shared/constants.js';
 let running = 0;
 export async function runParser(action, buffer, options) {
   if (running >= 1) throw fail(429, '正在处理其他文件，请稍后重试');
@@ -7,7 +8,7 @@ export async function runParser(action, buffer, options) {
   try {
     return await new Promise((resolve, reject) => {
       const worker = new Worker(new URL('./parser-worker.js', import.meta.url), {
-        workerData: { action, buffer, options }, resourceLimits: { maxOldGenerationSizeMb: 128 },
+        workerData: { action, buffer, options }, resourceLimits: { maxOldGenerationSizeMb: DELIVERY_SLOTS.some(slot => slot.id === options.slotId) ? 384 : 128 },
       });
       let settled = false;
       const finish = (error, value) => {

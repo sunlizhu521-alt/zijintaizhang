@@ -21,6 +21,7 @@
     "react": "19.1.1",
     "react-dom": "19.1.1",
     "saxes": "5.0.1",
+    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz",
     "yauzl": "3.4.0"
   },
   "devDependencies": {
