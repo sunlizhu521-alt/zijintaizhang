@@ -27,7 +27,7 @@ export function monthRow(db, month, writable = false) {
   monthValue(month);
   const row = db.prepare('SELECT * FROM rating_months WHERE month=?').get(month);
   if (!row) throw fail('管理员尚未开启此月份', 404);
-  if (writable && row.status !== 'open') throw fail('此月份已结月，请管理员重开后操作', 409);
+  if (writable && row.status !== 'open') throw fail(row.status === 'paused' ? '此月份已临时关闭，请管理员恢复评分后操作' : '此月份已结月，请管理员重开后操作', 409);
   return row;
 }
 export function checkRevision(row, revision) { if ((row?.revision || 0) !== revision) throw fail('数据已更新，请刷新后核对；未保存内容仍保留', 409); }
@@ -54,7 +54,7 @@ export function monthBundle(db, month, user) {
     const itemScores = Object.fromEntries(rule.items.map(item => [item.id, count ? submitted.reduce((sum, s) => sum + s.scores[item.id], 0) / count : null]));
     const totalRaw = count ? Object.values(itemScores).reduce((sum, n) => sum + n, 0) : null;
     const groups = Object.fromEntries(['交期', '数量', '配合'].map(g => [g, count ? rule.items.filter(i => i.group === g).reduce((sum, i) => sum + itemScores[i.id], 0) : null]));
-    return { supplierId: a.supplier_id, code: a.code, name: a.name, month, exempt: a.exempt, reason: a.reason, expected: a.exempt ? 0 : a.raters.length, count, totalRaw, total: roundScore(totalRaw), grade: ratingGrade(totalRaw), groups, itemScores, closed: m.status === 'closed' };
+    return { supplierId: a.supplier_id, code: a.code, name: a.name, month, exempt: a.exempt, reason: a.reason, expected: a.exempt ? 0 : a.raters.length, count, totalRaw, total: roundScore(totalRaw), grade: ratingGrade(totalRaw), groups, itemScores, status: m.status, closed: m.status === 'closed' };
   });
   return { month: m, rule, assignments: assignments.map(a => user.isAdmin ? a : { ...a, raters: a.raters.filter(r => r.id === user.id) }), summaries,
     scores: scores.filter(s => user.isAdmin || s.user_id === user.id),

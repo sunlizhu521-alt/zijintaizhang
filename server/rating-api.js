@@ -100,6 +100,20 @@ export function createRatingApi(db, { secureCookies = false, publicOrigin = '' }
     history(db, req.user, '撤回评分', month, supplier, row);
     return { ok: true };
   })));
+  api.post('/months/:month/pause', auth.requireAdmin, (req, res) => res.json(transaction(db, () => {
+    const m = monthRow(db, req.params.month); checkRevision(m, req.body.revision);
+    if (m.status !== 'open') throw fail('仅评分中的月份可临时关闭', 409);
+    db.prepare("UPDATE rating_months SET status='paused',revision=revision+1 WHERE month=?").run(m.month);
+    history(db, req.user, '临时关闭评价', m.month);
+    return { ok: true };
+  })));
+  api.post('/months/:month/resume', auth.requireAdmin, (req, res) => res.json(transaction(db, () => {
+    const m = monthRow(db, req.params.month); checkRevision(m, req.body.revision);
+    if (m.status !== 'paused') throw fail('仅临时关闭的月份可恢复评分', 409);
+    db.prepare("UPDATE rating_months SET status='open',revision=revision+1 WHERE month=?").run(m.month);
+    history(db, req.user, '恢复评分', m.month);
+    return { ok: true };
+  })));
   api.post('/months/:month/close', auth.requireAdmin, (req, res) => res.json(transaction(db, () => {
     const m = monthRow(db, req.params.month, true); checkRevision(m, req.body.revision);
     const bundle = monthBundle(db, m.month, req.user);

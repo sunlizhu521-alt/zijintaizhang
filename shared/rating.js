@@ -1,4 +1,5 @@
 export const RATING_BASE = '/gongyingshangpingji';
+export const RATING_MONTH_LABELS = { open: '评分中', paused: '临时关闭', closed: '已结月' };
 export const RATING_PERMISSIONS = { rate: '填写本人评分', dashboard: '查看授权供应商汇总', export: '导出授权记录' };
 export const RATING_ITEMS = [
   { id: 'ontime', group: '交期', name: '按期交付表现', max: 40, standard: '按双方确认的交期完成交付；依据延期天数、次数及对计划的实际影响评价。' },
