@@ -1,0 +1,137 @@
+import test from 'node:test';
+import { randomUUID } from 'node:crypto';
+import assert from 'node:assert/strict';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import ExcelJS from 'exceljs';
+import { openDatabase } from '../server/db.js';
+import { initAdmin } from '../server/auth.js';
+import { createApp } from '../server/app.js';
+import { RATING_ITEMS, ratingGrade } from '../shared/rating.js';
+import { parseRatingSuppliers } from '../server/rating-excel.js';
+const base = '/gongyingshangpingji/api';
+async function fixture(t) {
+  const dir = mkdtempSync(join(tmpdir(), 'supplier-rating-'));
+  const db = openDatabase(join(dir, 'funds.sqlite')), ratingDb = openDatabase(join(dir, 'rating.sqlite'));
+  await initAdmin(db, { username: 'admin', displayName: '资金管理员', password: 'Admin12' });
+  await initAdmin(ratingDb, { username: 'admin', displayName: '评级管理员', password: 'Rating12' });
+  const app = createApp({ db, ratingDb });
+  const server = await new Promise(resolve => { const s = app.listen(0, '127.0.0.1', () => resolve(s)); });
+  const origin = `http://127.0.0.1:${server.address().port}`;
+  t.after(async () => { await new Promise(r => server.close(r)); db.close(); ratingDb.close(); rmSync(dir, { recursive: true, force: true }); });
+  const request = async (path, { session, body, method = body ? 'POST' : 'GET', headers = {} } = {}) => {
+    const r = await fetch(origin + path, { method, headers: { ...(body ? { 'Content-Type': 'application/json', Origin: origin } : {}), ...(session ? { Cookie: session.cookie, 'X-CSRF-Token': session.csrfToken } : {}), ...headers }, body: body ? JSON.stringify(body) : undefined });
+    const data = r.headers.get('content-type')?.includes('application/json') ? await r.json() : await r.arrayBuffer();
+    return { status: r.status, data, cookie: r.headers.get('set-cookie'), headers: r.headers };
+  };
+  const login = async (username, password, path = base) => { const r = await request(`${path}/auth/login`, { body: { username, password } }); assert.equal(r.status, 200, JSON.stringify(r.data)); return { ...r.data, cookie: r.cookie.split(';')[0] }; };
+  const admin = await login('admin', 'Rating12');
+  const call = async (path, body, method, session = admin, expected = 200) => { const r = await request(base + path, { session, body, method }); assert.equal(r.status, expected, `${path}: ${JSON.stringify(r.data)}`); return r.data; };
+  const user = async username => { const r = await call('/users', { username, displayName: username, password: 'User123', permissions: ['rate', 'dashboard', 'export'] }, 'POST', admin, 201); ratingDb.prepare('UPDATE users SET must_change_password=0 WHERE id=?').run(r.user.id); return login(username, 'User123'); };
+  const supplier = async (code = '001') => (await call('/suppliers', { code, name: '合成供应商' + code, active: true })).id;
+  const assign = async (month, supplierId, ids, revision = 0) => call(`/months/${month}/assignments/${supplierId}`, { userIds: ids, revision, exempt: false }, 'PUT');
+  const scores = factor => Object.fromEntries(RATING_ITEMS.map(i => [i.id, Math.round(i.max * factor)]));
+  const submit = (month, supplierId, session, factor = 1, revision = 0) => call(`/months/${month}/scores/${supplierId}`, { revision, status: 'submitted', scores: scores(factor), notes: Object.fromEntries(RATING_ITEMS.map(i => [i.id, '合成订单依据'])), verified: true }, 'PUT', session);
+  return { db, ratingDb, origin, request, login, call, admin, user, supplier, assign, scores, submit };
+}
+test('评级账号会话、来源、CSRF和财务完全隔离；独立路由资源可用', async t => {
+  const f = await fixture(t);
+  assert.equal((await f.request(base + '/bootstrap')).status, 401);
+  assert.equal((await f.request('/zijintaizhang/api/dashboard', { session: f.admin })).status, 401);
+  const funds = await f.login('admin', 'Admin12', '/zijintaizhang/api');
+  assert.equal((await f.request(base + '/bootstrap', { session: funds })).status, 401);
+  assert.equal((await f.request(base + '/months', { session: f.admin, body: { month: '2026-10' }, headers: { 'X-CSRF-Token': 'wrong' } })).status, 403);
+  assert.equal((await f.request(base + '/months', { session: f.admin, body: { month: '2026-10' }, headers: { Origin: 'https://foreign.example' } })).status, 403);
+  const u = await f.user('rater');
+  await f.call('/users', null, 'GET', u, 403);
+  await f.call('/auth/password', { currentPassword: 'User123', newPassword: 'Other456' }, 'POST', u);
+  assert.equal((await f.request(base + '/bootstrap', { session: u })).status, 401);
+  assert.equal((await f.request('/zijintaizhang/api/auth/session', { session: funds })).status, 200);
+  const page = await fetch(f.origin + '/gongyingshangpingji/');
+  assert.equal(page.status, 200); const html = await page.text(); assert.match(html, /<title>供应商评级<\/title>/); assert.match(html, /\/gongyingshangpingji\/assets\//);
+  assert.equal((await fetch(f.origin + '/zijintaizhang/')).status, 200);
+  assert.equal((await fetch(f.origin + '/caigoudingdangenjin/')).status, 200);
+  assert.equal((await fetch(f.origin + '/jihuaguanli/')).status, 200);
+});
+test('评分验证、缺评、零分、个人明细权限、结月重开和历史快照', async t => {
+  const f = await fixture(t), a = await f.user('rater-a'), b = await f.user('rater-b'), outsider = await f.user('outsider'), id = await f.supplier();
+  await f.call('/months', { month: '2026-10' }); await f.assign('2026-10', id, [a.user.id, b.user.id]);
+  const path = `/months/2026-10/scores/${id}`;
+  await f.call(path, { revision: 0, scores: {}, notes: {}, verified: true, status: 'submitted' }, 'PUT', a, 400);
+  await f.call(path, { revision: 0, scores: f.scores(0), notes: {}, verified: true, status: 'submitted' }, 'PUT', a, 400);
+  await f.call(path, { revision: 0, scores: { ...f.scores(1), ontime: 41 }, notes: {}, verified: true, status: 'draft' }, 'PUT', a, 400);
+  await f.call(path, { revision: 0, scores: f.scores(1), notes: {}, verified: true, status: 'submitted' }, 'PUT', outsider, 403);
+  await f.submit('2026-10', id, a, 0);
+  let view = await f.call('/months/2026-10'); assert.equal(view.summaries[0].total, 0); assert.equal(view.summaries[0].count, 1); assert.equal(view.summaries[0].expected, 2);
+  await f.call('/months/2026-10/close', { revision: 1 }, 'POST', f.admin, 400);
+  await f.submit('2026-10', id, b);
+  view = await f.call('/months/2026-10', null, 'GET', a); assert.equal(view.scores.length, 1); assert.equal(view.scores[0].user_id, a.user.id); assert.equal(view.summaries[0].total, 50);
+  const hidden = await f.call('/months/2026-10', null, 'GET', outsider); assert.equal(hidden.summaries.length, 0); assert.equal(hidden.scores.length, 0);
+  await f.call('/months/2026-10/close', { revision: 1 });
+  await f.call(path + '/withdraw', { revision: 1 }, 'POST', a, 409);
+  await f.call('/months/2026-10/reopen', { revision: 2, reason: '更正依据' });
+  await f.call(path + '/withdraw', { revision: 1 }, 'POST', a);
+  await f.call(path, { revision: 1, scores: f.scores(1), notes: {}, verified: true, status: 'submitted' }, 'PUT', a, 409);
+  await f.submit('2026-10', id, a, 1, 2);
+  await f.call('/months/2026-10/close', { revision: 3 });
+  const snaps = f.ratingDb.prepare('SELECT * FROM rating_snapshots ORDER BY version').all(); assert.equal(snaps.length, 2); assert.equal(JSON.parse(snaps[0].data_json).summaries[0].total, 50); assert.equal(JSON.parse(snaps[1].data_json).summaries[0].total, 100);
+  const exp = await f.request(base + '/months/2026-10/export?version=1', { session: a }); assert.equal(exp.status, 200);
+  const book = new ExcelJS.Workbook(); await book.xlsx.load(Buffer.from(exp.data));
+  assert.equal(book.getWorksheet('评分汇总').getCell('G2').value, 50); assert.equal(book.getWorksheet('个人评分').rowCount, 2);
+  for (const sheet of book.worksheets) { assert.ok(sheet.autoFilter); assert.equal(Object.keys(sheet.tables).length, 0); if (sheet.rowCount > 1) { assert.equal(sheet.getCell('A2').alignment.horizontal, 'center'); assert.equal(sheet.getCell('A2').fill.fgColor.argb, 'FFFFFFFF'); } }
+  const hiddenExport = await f.request(base + '/months/2026-10/export', { session: outsider });
+  const hiddenBook = new ExcelJS.Workbook(); await hiddenBook.xlsx.load(Buffer.from(hiddenExport.data)); assert.equal(hiddenBook.getWorksheet('个人评分').rowCount, 1);
+});
+test('季度按月等权、跨期权限、分配快照及规则版本不回写', async t => {
+  const f = await fixture(t), a = await f.user('rater-a'), b = await f.user('rater-b'), id = await f.supplier();
+  for (const month of ['2026-07', '2026-08']) { await f.call('/months', { month }); await f.assign(month, id, month === '2026-07' ? [a.user.id] : [a.user.id, b.user.id]); }
+  await f.submit('2026-07', id, a, 0); await f.call('/months/2026-07/close', { revision: 1 });
+  await f.submit('2026-08', id, a, 1); await f.submit('2026-08', id, b, 1); await f.call('/months/2026-08/close', { revision: 1 });
+  const d = await f.call('/dashboard?year=2026'); assert.equal(d.periods.find(p => p.period === 'Q3').total, 50); assert.equal(d.periods.find(p => p.period === 'Q3').partial, true);
+  assert.equal((await f.call('/dashboard?year=2026', null, 'GET', b)).periods.length, 0);
+  const report = await f.request(base + '/dashboard/export?year=2026&period=Q3', { session: a });
+  const quarterly = new ExcelJS.Workbook(); await quarterly.xlsx.load(Buffer.from(report.data));
+  assert.equal(quarterly.getWorksheet('期间评分汇总').getCell('H2').value, 50);
+  const deniedReport = await f.request(base + '/dashboard/export?year=2026&period=Q3', { session: b });
+  const deniedBook = new ExcelJS.Workbook(); await deniedBook.xlsx.load(Buffer.from(deniedReport.data)); assert.equal(deniedBook.getWorksheet('期间评分汇总').rowCount, 1);
+  const rule = (await f.call('/bootstrap')).rule; await f.call('/rules', { baseId: rule.id, items: rule.items.map(i => ({ ...i, standard: '新标准' })) });
+  await f.call('/months', { month: '2026-09', sourceMonth: '2026-08' });
+  assert.equal((await f.call('/months/2026-08')).rule.items[0].standard, RATING_ITEMS[0].standard);
+  assert.equal((await f.call('/months/2026-09')).rule.items[0].standard, '新标准');
+  assert.equal(ratingGrade(89.96), 'A'); assert.equal(ratingGrade(89.94), 'B'); assert.equal(ratingGrade(null), '—');
+});
+test('过程记录隐私、日期边界与关闭月份后持续整改', async t => {
+  const f = await fixture(t), a = await f.user('rater-a'), b = await f.user('rater-b'), id = await f.supplier();
+  await f.call('/months', { month: '2026-10' }); await f.assign('2026-10', id, [a.user.id, b.user.id]);
+  const record = { month: '2026-10', supplierId: id, revision: 0, item: 'ontime', issue: '合成问题', state: '处理中', dueDate: '2026-02-30' };
+  await f.call(`/records/${randomUUID()}`, record, 'PUT', a, 400);
+  const saved = await f.call(`/records/${randomUUID()}`, { ...record, dueDate: '2026-10-31', review: '试图代写管理员意见' }, 'PUT', a);
+  assert.equal((await f.call('/months/2026-10', null, 'GET', b)).records.length, 0);
+  assert.equal((await f.call('/months/2026-10')).records[0].review, '');
+  await f.call(`/records/${saved.id}`, { ...record, revision: 1, dueDate: '' }, 'PUT', b, 403);
+  await f.call('/months/2026-10/close', { revision: 1, confirmPartial: true, reason: '本次合成验收允许缺评' });
+  await f.call(`/records/${saved.id}`, { ...record, revision: 1, dueDate: '2026-10-31', completedDate: '2026-11-01', state: '已完成', review: '采购已复核' }, 'PUT');
+  assert.equal((await f.call('/months/2026-10')).records[0].review, '采购已复核');
+});
+test('供应商Excel编码前导零、重复与公式拒绝', async () => {
+  const book = new ExcelJS.Workbook(), s = book.addWorksheet('供应商名单'); s.addRow(['供应商编码', '供应商名称', '状态']); s.addRow(['001', '合成供应商', '启用']); s.addRow([2, '另一家', '停用']); s.getCell('A3').numFmt = '000';
+  const rows = await parseRatingSuppliers(Buffer.from(await book.xlsx.writeBuffer())); assert.equal(rows[0].code, '001'); assert.equal(rows[1].code, '002'); assert.equal(rows[1].active, false);
+  s.getCell('A3').value = '001'; await assert.rejects(parseRatingSuppliers(Buffer.from(await book.xlsx.writeBuffer())), /重复编码/);
+  s.getCell('A3').value = { formula: '1+2', result: 3 }; await assert.rejects(parseRatingSuppliers(Buffer.from(await book.xlsx.writeBuffer())), /不能是公式/);
+});
+
+test('供应商导入预览保留原件，冲突不覆盖，确认后可持久化读取', async t => {
+  const f = await fixture(t); const id = await f.supplier();
+  const book = new ExcelJS.Workbook(), sheet = book.addWorksheet('供应商名单'); sheet.addRow(['供应商编码','供应商名称']); sheet.addRow(['001','导入的新名称']); sheet.addRow(['002','新供应商']);
+  const buffer = Buffer.from(await book.xlsx.writeBuffer());
+  const preview = async () => { const form = new FormData(); form.append('file', new Blob([buffer]), '名单.xlsx'); const r = await fetch(f.origin + base + '/suppliers/import/preview', { method:'POST', headers: {Cookie:f.admin.cookie,'X-CSRF-Token':f.admin.csrfToken,Origin:f.origin}, body:form }); assert.equal(r.status,200); return r.json(); };
+  const first = await preview(); assert.equal(first.rows[0].before.name,'合成供应商001');
+  await f.call('/suppliers/'+id, {code:'001',name:'同时人工修改',active:true,revision:1}, 'PUT');
+  await f.call('/suppliers/import/commit',{id:first.id},'POST',f.admin,409);
+  assert.equal(f.ratingDb.prepare('SELECT name FROM rating_suppliers WHERE id=?').get(id).name,'同时人工修改');
+  const next = await preview(); await f.call('/suppliers/import/commit',{id:next.id});
+  assert.equal(f.ratingDb.prepare('SELECT name FROM rating_suppliers WHERE id=?').get(id).name,'导入的新名称');
+  assert.deepEqual(Buffer.from(f.ratingDb.prepare('SELECT content FROM rating_imports WHERE id=?').get(next.id).content),buffer);
+  assert.equal(f.ratingDb.prepare('PRAGMA quick_check').get().quick_check,'ok');
+});

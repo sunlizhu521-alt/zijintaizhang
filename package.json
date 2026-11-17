@@ -7,7 +7,7 @@
   "scripts": {
     "dev": "node --watch server/index.js",
     "client": "vite --host 127.0.0.1",
-    "build": "vite build",
+    "build": "vite build && vite build --config vite.rating.config.js",
     "start": "node server/index.js",
     "test": "node --test test/*.test.js",
     "admin:init": "node scripts/admin-init.js"

@@ -127,13 +127,15 @@ database="$APP_ROOT/shared/data/zijintaizhang.sqlite"
 python3 - "$APP_ROOT" "$database" <<'PY_SPACE'
 import os, sys
 root, database = sys.argv[1:]
-size = os.path.getsize(database) if os.path.exists(database) else 0
+size = sum(os.path.getsize(p) for p in (database, os.path.join(os.path.dirname(database), 'gongyingshangpingji.sqlite')) if os.path.exists(p))
 disk = os.statvfs(root)
 if disk.f_bavail * disk.f_frsize < size * 2 + 128 * 1024 * 1024:
     raise SystemExit('Insufficient free space for a verified database backup.')
 PY_SPACE
+backup_stamp=$(date -u +%Y%m%dT%H%M%SZ)
+for database in "$APP_ROOT/shared/data/zijintaizhang.sqlite" "$APP_ROOT/shared/data/gongyingshangpingji.sqlite"; do
 if [[ -f $database ]]; then
-  backup="$APP_ROOT/shared/backups/predeploy-$(date -u +%Y%m%dT%H%M%SZ)-$commit.sqlite"
+  backup="$APP_ROOT/shared/backups/predeploy-$(basename "$database" .sqlite)-$backup_stamp-$commit.sqlite"
   "$runtime" --input-type=module - "$database" "$backup" <<'JS_BACKUP'
 import { DatabaseSync, backup } from 'node:sqlite';
 import { renameSync, rmSync } from 'node:fs';
@@ -153,6 +155,7 @@ finally { source.close(); }
 JS_BACKUP
   echo 'Database backup and integrity check passed.'
 fi
+done
 
 mv "$staging" "$release"
 switch_current "$release"
@@ -170,5 +173,10 @@ done
 curl --fail --silent --show-error --max-time 15 --retry 2 --retry-delay 1 \
   'https://129.211.9.242/zijintaizhang/api/health' |
   python3 -c 'import json,sys; p=json.load(sys.stdin); sys.exit(0 if p.get("status")=="ok" and p.get("app")=="zijintaizhang" and p.get("release")==sys.argv[1] else 1)' "$commit"
+if [[ -f "$release/server/rating-api.js" ]]; then
+curl --fail --silent --show-error --max-time 15 --retry 2 --retry-delay 1 \
+  'https://129.211.9.242/gongyingshangpingji/api/health' |
+  python3 -c 'import json,sys; p=json.load(sys.stdin); sys.exit(0 if p.get("status")=="ok" and p.get("app")=="gongyingshangpingji" and p.get("release")==sys.argv[1] else 1)' "$commit"
+fi
 pm2 save >/dev/null
 echo "Deployed zijintaizhang commit $commit on 127.0.0.1:$APP_PORT."

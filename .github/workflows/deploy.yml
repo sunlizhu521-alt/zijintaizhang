@@ -169,3 +169,16 @@ jobs:
           const response = await fetch('https://129.211.9.242/zijintaizhang/api/delivery/dashboard');
           if (response.status !== 401) throw new Error('Delivery API must require authentication');
           NODE
+          curl --fail --silent --show-error --max-time 15 \
+            'https://129.211.9.242/gongyingshangpingji/api/health' > "$RUNNER_TEMP/rating-health.json"
+          curl --fail --silent --show-error --max-time 15 \
+            'https://129.211.9.242/gongyingshangpingji/' > "$RUNNER_TEMP/rating-home.html"
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          const health = JSON.parse(fs.readFileSync(`${process.env.RUNNER_TEMP}/rating-health.json`, 'utf8'));
+          const html = fs.readFileSync(`${process.env.RUNNER_TEMP}/rating-home.html`, 'utf8');
+          if (health.app !== 'gongyingshangpingji' || health.status !== 'ok' || health.release !== process.env.GITHUB_SHA) throw new Error('Rating release check failed');
+          if (!html.includes('<title>供应商评级</title>') || !html.includes('/gongyingshangpingji/assets/')) throw new Error('Rating page check failed');
+          const response = await fetch('https://129.211.9.242/gongyingshangpingji/api/bootstrap');
+          if (response.status !== 401) throw new Error('Rating API must require authentication');
+          NODE

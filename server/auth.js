@@ -36,8 +36,8 @@ function validDisplayName(displayName, fallback) {
   return value;
 }
 
-function validPermissions(permissions) {
-  if (!Array.isArray(permissions) || permissions.some((item) => !ALL_PERMISSIONS.includes(item))) {
+function validPermissions(permissions, allowed = ALL_PERMISSIONS) {
+  if (!Array.isArray(permissions) || permissions.some((item) => !allowed.includes(item))) {
     throw problem('包含无效权限');
   }
   return [...new Set(permissions)];
@@ -61,11 +61,11 @@ export async function verifyPassword(password, stored) {
   return timingSafeEqual(actual, expected);
 }
 
-function publicUser(row) {
+function publicUser(row, allowed = ALL_PERMISSIONS) {
   return {
     id: row.id, username: row.username, displayName: row.display_name,
     active: Boolean(row.active), isAdmin: Boolean(row.is_admin),
-    permissions: row.is_admin ? [...ALL_PERMISSIONS] : JSON.parse(row.permissions_json),
+    permissions: row.is_admin ? [...allowed] : JSON.parse(row.permissions_json),
     mustChangePassword: Boolean(row.must_change_password), createdAt: row.created_at, updatedAt: row.updated_at,
   };
 }
@@ -87,7 +87,10 @@ export async function initAdmin(db, { username, displayName, password }) {
   });
 }
 
-export function createAuth(db, { secureCookies = false } = {}) {
+export function createAuth(db, { secureCookies = false, basePath = BASE_PATH, apiPath = API_PATH,
+  cookieName = SESSION_COOKIE, permissions = PERMISSIONS } = {}) {
+  const allowedPermissions = Object.keys(permissions);
+  const serializeUser = row => publicUser(row, allowedPermissions);
   const router = Router();
   const userRouter = Router();
   for (const routes of [router, userRouter]) routes.use((_req, res, next) => { res.set('Cache-Control', 'no-store'); next(); });
@@ -96,7 +99,7 @@ export function createAuth(db, { secureCookies = false } = {}) {
   const accountFailures = new Map();
   let lastCleanup = 0;
   const dummyHash = hashPassword(`a1${randomBytes(32).toString('hex')}`);
-  const cookieOptions = { httpOnly: true, secure: secureCookies, sameSite: 'strict', path: BASE_PATH };
+  const cookieOptions = { httpOnly: true, secure: secureCookies, sameSite: 'strict', path: basePath };
   const readUser = (id) => db.prepare('SELECT * FROM users WHERE id = ?').get(id);
   const requestPath = (req) => (req.originalUrl || req.path || '').split('?')[0];
   const auditRequest = (req, event) => audit(db, {
@@ -112,9 +115,9 @@ export function createAuth(db, { secureCookies = false } = {}) {
   }
 
   function readSession(req) {
-    const cookies = String(req.headers.cookie || '').split(';').map((part) => part.trim()).filter((part) => part.startsWith(`${SESSION_COOKIE}=`));
+    const cookies = String(req.headers.cookie || '').split(';').map((part) => part.trim()).filter((part) => part.startsWith(`${cookieName}=`));
     if (cookies.length !== 1) return null;
-    const token = cookies[0].slice(SESSION_COOKIE.length + 1);
+    const token = cookies[0].slice(cookieName.length + 1);
     if (!/^[A-Za-z0-9_-]{43}$/.test(token)) return null;
     const tokenHash = digest(token);
     const session = db.prepare('SELECT * FROM sessions WHERE token_hash = ?').get(tokenHash);
@@ -125,14 +128,14 @@ export function createAuth(db, { secureCookies = false } = {}) {
     }
     const row = readUser(session.user_id);
     if (!row?.active) return null;
-    req.user = publicUser(row);
+    req.user = serializeUser(row);
     req.session = { tokenHash, csrfToken: session.csrf_token, expiresAt: session.expires_at };
     return req.session;
   }
 
   function authenticate(req, res, next) {
     if (!readSession(req)) return fail(res, 401, '请重新登录');
-    const allowed = ['session', 'password', 'logout'].map((action) => `${API_PATH}/auth/${action}`);
+    const allowed = ['session', 'password', 'logout'].map((action) => `${apiPath}/auth/${action}`);
     if (req.user.mustChangePassword && !allowed.includes(requestPath(req))) {
       return fail(res, 403, '请先修改初始密码', 'PASSWORD_CHANGE_REQUIRED');
     }
@@ -140,7 +143,7 @@ export function createAuth(db, { secureCookies = false } = {}) {
   }
 
   function requirePermission(name) {
-    if (!ALL_PERMISSIONS.includes(name)) throw new Error(`未知权限：${name}`);
+    if (!allowedPermissions.includes(name)) throw new Error(`未知权限：${name}`);
     return (req, res, next) => {
       if (req.user && (req.user.isAdmin || req.user.permissions.includes(name))) return next();
       auditRequest(req, { kind: 'security', action: '访问未授权功能', target: name, outcome: 'blocked', status: 403 });
@@ -155,7 +158,7 @@ export function createAuth(db, { secureCookies = false } = {}) {
   }
 
   function csrfProtection(req, res, next) {
-    if (['GET', 'HEAD', 'OPTIONS'].includes(req.method) || requestPath(req) === `${API_PATH}/auth/login`) return next();
+    if (['GET', 'HEAD', 'OPTIONS'].includes(req.method) || requestPath(req) === `${apiPath}/auth/login`) return next();
     if (!readSession(req)) {
       auditRequest(req, { kind: 'security', actor: undefined, action: '未登录写入请求', outcome: 'blocked', status: 401 });
       return fail(res, 401, '请重新登录');
@@ -199,8 +202,8 @@ export function createAuth(db, { secureCookies = false } = {}) {
     const csrfToken = randomBytes(32).toString('base64url');
     db.prepare('INSERT INTO sessions (token_hash,user_id,csrf_token,created_at,expires_at) VALUES (?,?,?,?,?)')
       .run(digest(token), row.id, csrfToken, nowText(), new Date(Date.now() + SESSION_MS).toISOString());
-    res.cookie(SESSION_COOKIE, token, { ...cookieOptions, maxAge: SESSION_MS });
-    return { user: publicUser(row), csrfToken };
+    res.cookie(cookieName, token, { ...cookieOptions, maxAge: SESSION_MS });
+    return { user: serializeUser(row), csrfToken };
   }
 
   function registerFailure(map, key, now) {
@@ -254,7 +257,7 @@ export function createAuth(db, { secureCookies = false } = {}) {
       db.prepare('DELETE FROM sessions WHERE token_hash = ?').run(req.session.tokenHash);
       auditRequest(req, { kind: 'login', action: '退出登录', target: req.user.username, outcome: 'success', status: 200 });
     });
-    res.clearCookie(SESSION_COOKIE, cookieOptions);
+    res.clearCookie(cookieName, cookieOptions);
     res.json({ ok: true });
   });
   router.post('/password', authenticate, async (req, res) => {
@@ -279,11 +282,11 @@ export function createAuth(db, { secureCookies = false } = {}) {
   });
 
   userRouter.use(requireAdmin);
-  userRouter.get('/', (_req, res) => res.json({ users: db.prepare('SELECT * FROM users ORDER BY created_at,id').all().map(publicUser) }));
+  userRouter.get('/', (_req, res) => res.json({ users: db.prepare('SELECT * FROM users ORDER BY created_at,id').all().map(serializeUser) }));
   userRouter.post('/', async (req, res) => {
     const username = validUsername(req.body?.username);
     const displayName = validDisplayName(req.body?.displayName, username);
-    const permissions = validPermissions(req.body?.permissions === undefined ? [] : req.body.permissions);
+    const permissions = validPermissions(req.body?.permissions === undefined ? [] : req.body.permissions, allowedPermissions);
     if (req.body?.isAdmin !== undefined && typeof req.body.isAdmin !== 'boolean') throw problem('管理员标记无效');
     const passwordHash = await hashPassword(req.body?.password);
     let user;
@@ -294,7 +297,7 @@ export function createAuth(db, { secureCookies = false } = {}) {
       const now = nowText();
       db.prepare(`INSERT INTO users(id,username,display_name,password_hash,is_admin,permissions_json,must_change_password,created_at,updated_at)
         VALUES(?,?,?,?,?,?,1,?,?)`).run(id, username, displayName, passwordHash, req.body?.isAdmin ? 1 : 0, JSON.stringify(permissions), now, now);
-      user = publicUser(readUser(id));
+      user = serializeUser(readUser(id));
       auditRequest(req, { kind: 'operation', action: '创建用户', target: username, outcome: 'success', status: 201, details: { after: user } });
     });
     res.status(201).json({ user });
@@ -310,7 +313,7 @@ export function createAuth(db, { secureCookies = false } = {}) {
       const active = req.body.active === undefined ? before.active : Number(req.body.active);
       const isAdmin = req.body.isAdmin === undefined ? before.is_admin : Number(req.body.isAdmin);
       const displayName = req.body.displayName === undefined ? before.display_name : validDisplayName(req.body.displayName, before.display_name);
-      const permissions = req.body.permissions === undefined ? JSON.parse(before.permissions_json) : validPermissions(req.body.permissions);
+      const permissions = req.body.permissions === undefined ? JSON.parse(before.permissions_json) : validPermissions(req.body.permissions, allowedPermissions);
       if (before.active && before.is_admin && (!active || !isAdmin)) {
         const count = db.prepare('SELECT COUNT(*) AS count FROM users WHERE active=1 AND is_admin=1').get().count;
         if (count <= 1) throw problem('不能停用或降级最后一位管理员');
@@ -319,8 +322,8 @@ export function createAuth(db, { secureCookies = false } = {}) {
         .run(displayName, active, isAdmin, JSON.stringify(permissions), nowText(), before.id);
       const accessChanged = active !== before.active || isAdmin !== before.is_admin || JSON.stringify([...permissions].sort()) !== JSON.stringify(JSON.parse(before.permissions_json).sort());
       if (accessChanged) db.prepare('DELETE FROM sessions WHERE user_id=?').run(before.id);
-      user = publicUser(readUser(before.id));
-      auditRequest(req, { kind: 'operation', action: '更新用户及权限', target: before.username, outcome: 'success', status: 200, details: { before: publicUser(before), after: user, sessionsRevoked: accessChanged } });
+      user = serializeUser(readUser(before.id));
+      auditRequest(req, { kind: 'operation', action: '更新用户及权限', target: before.username, outcome: 'success', status: 200, details: { before: serializeUser(before), after: user, sessionsRevoked: accessChanged } });
     });
     res.json({ user });
   });

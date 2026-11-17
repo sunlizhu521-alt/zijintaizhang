@@ -21,7 +21,7 @@ function invalid(message, issues = []) {
   return Object.assign(new Error(message), { status: 422, issues });
 }
 
-async function checkArchive(buffer) {
+export async function checkArchive(buffer) {
   if (!Buffer.isBuffer(buffer)) throw invalid('上传内容不是有效文件。');
   if (!buffer.length || buffer.length > MAX_UPLOAD_BYTES) throw invalid('Excel 文件不能为空且不能超过 20 MB。');
   return new Promise((resolve, reject) => {

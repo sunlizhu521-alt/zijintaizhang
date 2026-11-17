@@ -1,4 +1,6 @@
 import express from 'express';
+import { createRatingApi } from './rating-api.js';
+import { RATING_BASE } from '../shared/rating.js';
 import helmet from 'helmet';
 import multer from 'multer';
 import path from 'node:path';
@@ -67,7 +69,7 @@ function logQuery(db, query, all = false) {
     .all(...params, pageSize, all ? 0 : (page - 1) * pageSize).map(serializeAudit);
   return { items, total, page, pageSize };
 }
-export function createApp({ db, secureCookies = false, publicOrigin = '', trustProxy = false, distDir = distDefault } = {}) {
+export function createApp({ db, ratingDb, secureCookies = false, publicOrigin = '', trustProxy = false, distDir = distDefault } = {}) {
   initializeStorage(db);
   initializePlanner(db);
   initializeDelivery(db);
@@ -78,6 +80,12 @@ export function createApp({ db, secureCookies = false, publicOrigin = '', trustP
     imgSrc: ["'self'", 'data:'], connectSrc: ["'self'"], objectSrc: ["'none'"],
     upgradeInsecureRequests: secureCookies ? [] : null,
   } }, strictTransportSecurity: secureCookies ? undefined : false }));
+  if (ratingDb) {
+    app.use(`${RATING_BASE}/api`, createRatingApi(ratingDb, { secureCookies, publicOrigin }));
+    const ratingDist = path.join(distDir, 'gongyingshangpingji');
+    app.get(/^\/gongyingshangpingji$/, (_req, res) => res.redirect(308, `${RATING_BASE}/`));
+    app.use(`${RATING_BASE}/`, express.static(ratingDist, { index: 'index.html', dotfiles: 'deny', maxAge: 0 }));
+  }
   const api = express.Router();
   app.use(API_PATH, api);
   api.use((req, res, next) => { res.set('Cache-Control', 'no-store'); next(); });
