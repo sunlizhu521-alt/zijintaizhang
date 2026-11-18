@@ -12,6 +12,7 @@ import { createApp } from '../server/app.js';
 import { RATING_ITEMS, ratingGrade } from '../shared/rating.js';
 import { parseRatingSuppliers } from '../server/rating-excel.js';
 import { parseAssignmentWorkbook } from '../server/rating-assignment-import.js';
+import { reviewSupplierNames } from '../shared/rating-supplier-match.js';
 const base = '/gongyingshangpingji/api';
 async function fixture(t) {
   const dir = mkdtempSync(join(tmpdir(), 'supplier-rating-'));
@@ -222,6 +223,51 @@ function importChoices(preview, supplierId) {
   const needed = new Set(preview.sheets.filter(s => s.matchedUserId).flatMap(s => s.suppliers.map(s => s.index)));
   return { id: preview.id, sheets, suppliers: preview.suppliers.filter(s => needed.has(s.index)).map(s => ({ index: s.index, supplierId: supplierId(s) })) };
 }
+test('供应商只需判断同一家：相近名称仅建议，确认后对应，其他名称自动保留', () => {
+  const source = (index, name, extra = {}) => ({ index, name, matchedSupplierId: '', canCreate: true, ...extra });
+  const existing = { id: 'existing', code: '001', name: '深圳市云帆电机有限公司' };
+  const preview = { existingSuppliers: [existing], suppliers: [source(0, '云帆电机'), source(1, '远山橡胶'), source(2, existing.name, { matchedSupplierId: existing.id, canCreate: false })] };
+  const needed = new Set([0, 1, 2]);
+  let rows = reviewSupplierNames(preview, needed);
+  assert.equal(rows[0].candidate.id, existing.id); assert.equal(rows[0].target, '');
+  assert.equal(rows[1].target, 'new'); assert.equal(rows[1].needsReview, false);
+  assert.equal(rows[2].target, existing.id); assert.equal(rows[2].needsReview, false);
+  assert.equal(reviewSupplierNames(preview, needed, { 0: { sameAs: existing.id } })[0].target, existing.id);
+  assert.equal(reviewSupplierNames(preview, needed, { 0: { different: [existing.id] } })[0].target, 'new');
+  const fresh = { existingSuppliers: [], suppliers: [source(0, existing.name), source(1, '云帆电机')] };
+  rows = reviewSupplierNames(fresh, new Set([0, 1]));
+  assert.equal(rows[0].target, 'new'); assert.equal(rows[1].candidate.id, 'source:0'); assert.equal(rows[1].target, '');
+  rows = reviewSupplierNames(fresh, new Set([0, 1]), { 1: { sameAs: 'source:0' } });
+  assert.equal(rows[1].target, 'source:0'); assert.equal(rows[1].targetName, existing.name);
+  rows = reviewSupplierNames(fresh, new Set([1]), { 1: { sameAs: 'source:0' } });
+  assert.equal(rows[0].invalid, true); assert.equal(rows[0].target, '');
+  assert.equal(reviewSupplierNames(fresh, new Set([0, 1]), { 1: { different: ['source:0'] } })[1].target, 'new');
+  const blocked = { existingSuppliers: [], suppliers: [source(0, '已停用供应商', { canCreate: false, issue: '已停用' })] };
+  assert.equal(reviewSupplierNames(blocked, new Set([0]))[0].target, '');
+  assert.deepEqual(reviewSupplierNames(fresh, new Set()), []);
+});
+test('首次履约表中确认同一家只建一条记录，拒绝跨范围、自引用和循环对应', async t => {
+  const f = await fixture(t), a = await f.user('rater-a'), b = await f.user('rater-b');
+  await f.call('/months', { month: '2026-10' });
+  const buffer = await fulfillmentFile([['rater-a', ['深圳市云帆电机有限公司']], ['rater-b', ['云帆电机']]]);
+  const preview = await previewAssignments(f, buffer), endpoint = '/months/2026-10/assignment-import/commit';
+  const review = reviewSupplierNames(preview, new Set([0, 1]), { 1: { sameAs: 'source:0' } });
+  const choices = importChoices(preview, s => review.find(r => r.index === s.index).target);
+  for (const suppliers of [choices.suppliers.map(s => ({ ...s, supplierId: `source:${s.index}` })), [{ index: 0, supplierId: 'source:1' }, { index: 1, supplierId: 'source:0' }], [{ index: 0, supplierId: 'new' }, { index: 1, supplierId: 'source:999' }]]) {
+    await f.call(endpoint, { ...choices, suppliers }, 'POST', f.admin, 400);
+  }
+  await f.call(endpoint, { ...choices, sheets: [choices.sheets[1]], suppliers: [choices.suppliers[1]] }, 'POST', f.admin, 400);
+  assert.equal(f.ratingDb.prepare('SELECT count(*) n FROM rating_suppliers').get().n, 0);
+  const result = await f.call(endpoint, { ...choices, suppliers: [...choices.suppliers].reverse() });
+  assert.deepEqual(result, { sheets: 2, suppliers: 1, newSuppliers: 1, addedRaters: 2 });
+  const bundle = await f.call('/months/2026-10');
+  assert.equal(bundle.assignments[0].name, '深圳市云帆电机有限公司');
+  assert.deepEqual(bundle.assignments[0].raters.map(u => u.id).sort(), [a.user.id, b.user.id].sort());
+  const log = JSON.parse(f.ratingDb.prepare("SELECT data_json FROM rating_history WHERE action='导入履约表分配评价人'").get().data_json);
+  assert.deepEqual(log.changes[0].sources.map(s => s.supplier), ['深圳市云帆电机有限公司', '云帆电机']);
+  const repeated = await previewAssignments(f, buffer), id = bundle.assignments[0].supplier_id;
+  assert.equal((await f.call(endpoint, importChoices(repeated, () => id))).newSuppliers, 0);
+});
 test('履约表只按工作表命名人分配，多人供应商合并，原件和已有评分保持不变', async t => {
   const f = await fixture(t), a = await f.user('rater-a'), b = await f.user('rater-b'), id = await f.supplier();
   await f.call('/months', { month: '2026-10' }); await f.assign('2026-10', id, [f.admin.user.id]); await f.submit('2026-10', id, f.admin);

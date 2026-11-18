@@ -87,13 +87,19 @@ export function applyAssignmentImport(db, actor, draft, selection) {
     const sheet = data.sheets[choice.index]; sheets.set(choice.index, { sheet, user });
     sheet.suppliers.forEach(s => needed.add(s.index));
   }
+  const choices = new Map();
   for (const choice of selection.suppliers) {
-    if (!choice || !needed.has(choice.index) || targets.has(choice.index)) throw fail('供应商对应关系无效或重复');
+    if (!choice || !needed.has(choice.index) || choices.has(choice.index)) throw fail('供应商对应关系无效或重复');
+    choices.set(choice.index, choice);
+  }
+  for (const choice of [...choices.values()].sort((a, b) => a.index - b.index)) {
     const source = data.suppliers[choice.index];
-    const supplier = choice.supplierId === 'new' && source.canCreate
+    let supplier = choice.supplierId === 'new' && source.canCreate
       ? { id: source.newId, code: source.newCode, name: source.name, active: 1, isNew: true }
       : current.suppliers.find(s => s.id === choice.supplierId && s.active);
-    if (!supplier) throw fail(`请为“${source.name}”选择已启用的供应商，或明确选择新增`);
+    const reference = typeof choice.supplierId === 'string' && /^source:(0|[1-9]\d*)$/.exec(choice.supplierId);
+    if (reference && Number(reference[1]) < choice.index) supplier = targets.get(Number(reference[1]));
+    if (!supplier) throw fail(`请确认“${source.name}”是否与对比名称为同一家供应商`);
     targets.set(choice.index, supplier);
   }
   if (targets.size !== needed.size) throw fail('部分供应商尚未选择对应关系');
