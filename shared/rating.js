@@ -14,6 +14,8 @@ export const RATING_ITEMS = [
 export const RATING_BANDS = [
   [1, '全部按约完成'], [.8, '轻微偏差，及时纠正'], [.6, '反复催办或影响计划'], [.4, '严重偏差，补救不及时'], [0, '该项未履行或拒绝配合'],
 ];
+// Older rule versions did not store reference values; retain their original bands.
+export const ratingReferences = item => item.references ?? RATING_BANDS.map(([factor]) => Math.round(item.max * factor));
 export const ratingMonth = () => new Intl.DateTimeFormat('sv-SE', { timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit' }).format(new Date());
 export const roundScore = value => value == null ? null : Math.round((value + Number.EPSILON) * 10) / 10;
 export function ratingGrade(value) { const score = roundScore(value); return score == null ? '—' : score >= 90 ? 'A' : score >= 80 ? 'B' : score >= 70 ? 'C' : 'D'; }

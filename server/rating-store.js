@@ -54,8 +54,8 @@ export function monthBundle(db, month, user) {
     const count = a.exempt ? 0 : submitted.length;
     const itemScores = Object.fromEntries(rule.items.map(item => [item.id, count ? submitted.reduce((sum, s) => sum + s.scores[item.id], 0) / count : null]));
     const totalRaw = count ? Object.values(itemScores).reduce((sum, n) => sum + n, 0) : null;
-    const groups = Object.fromEntries(['交期', '数量', '配合'].map(g => [g, count ? rule.items.filter(i => i.group === g).reduce((sum, i) => sum + itemScores[i.id], 0) : null]));
-    return { supplierId: a.supplier_id, code: a.code, name: a.name, month, exempt: a.exempt, reason: a.reason, expected: a.exempt ? 0 : a.raters.length, count, totalRaw, total: roundScore(totalRaw), grade: ratingGrade(totalRaw), groups, itemScores, status: m.status, closed: m.status === 'closed' };
+    const groups = Object.fromEntries([...new Set(rule.items.map(i => i.group))].map(g => [g, count ? rule.items.filter(i => i.group === g).reduce((sum, i) => sum + itemScores[i.id], 0) : null]));
+    return { supplierId: a.supplier_id, code: a.code, name: a.name, month, ruleId: rule.id, itemNames: Object.fromEntries(rule.items.map(i => [i.id, i.name])), exempt: a.exempt, reason: a.reason, expected: a.exempt ? 0 : a.raters.length, count, totalRaw, total: roundScore(totalRaw), grade: ratingGrade(totalRaw), groups, itemScores, status: m.status, closed: m.status === 'closed' };
   });
   return { month: m, rule, assignments: assignments.map(a => user.isAdmin ? a : { ...a, raters: a.raters.filter(r => r.id === user.id) }), summaries,
     scores: scores.filter(s => user.isAdmin || s.user_id === user.id),
@@ -75,7 +75,9 @@ export function dashboard(db, year, user) {
     if (!relevant.length || relevant.some(s => !visible.some(v => v.month === s.month && v.supplierId === supplierId))) continue;
     const avg = values => values.reduce((a, b) => a + b, 0) / values.length;
     const totalRaw = avg(relevant.map(s => s.totalRaw));
-    groups.push({ supplierId, code: relevant[0].code, name: relevant.at(-1).name, period: q ? `Q${q}` : 'year', months: relevant.map(s => s.month), count: relevant.length, partial: relevant.length < (q ? 3 : 12) || relevant.some(s => s.count < s.expected), total: roundScore(totalRaw), grade: ratingGrade(totalRaw), groups: Object.fromEntries(['交期', '数量', '配合'].map(g => [g, avg(relevant.map(s => s.groups[g]))])) });
+    const dimensions = [...new Set(relevant.flatMap(s => Object.keys(s.groups)))];
+    // A dimension absent from an older rule is not a zero score.
+    groups.push({ supplierId, code: relevant[0].code, name: relevant.at(-1).name, period: q ? `Q${q}` : 'year', months: relevant.map(s => s.month), count: relevant.length, partial: relevant.length < (q ? 3 : 12) || relevant.some(s => s.count < s.expected), mixedRules: new Set(relevant.map(s => s.ruleId)).size > 1, total: roundScore(totalRaw), grade: ratingGrade(totalRaw), groups: Object.fromEntries(dimensions.map(g => [g, relevant.every(s => Object.hasOwn(s.groups, g) && s.groups[g] != null) ? avg(relevant.map(s => s.groups[g])) : null])) });
   }
   return { monthly: visible, periods: groups };
 }

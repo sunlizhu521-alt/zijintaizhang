@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { createAuth } from './auth.js';
 import { transaction, audit, serializeAudit } from './db.js';
 import { runParser } from './parse-job.js';
-import { RATING_BASE, RATING_ITEMS, RATING_PERMISSIONS } from '../shared/rating.js';
+import { RATING_BASE, RATING_PERMISSIONS, ratingReferences } from '../shared/rating.js';
 import { initializeRating, fail, textValue, monthValue, now, decode, rules, monthRow, checkRevision, assignment, history, monthBundle, dashboard, openMonth } from './rating-store.js';
 import { supplierTemplate, exportRating, exportRatingPeriod } from './rating-excel.js';
 import { prepareAssignmentImport, applyAssignmentImport } from './rating-assignment-import.js';
@@ -147,7 +147,7 @@ export function createRatingApi(db, { secureCookies = false, publicOrigin = '' }
     if (before && !req.user.isAdmin && before.user_id !== req.user.id) throw fail('不能修改他人的过程记录', 403);
     const data = {};
     for (const key of ['item', 'issue', 'attribution', 'action', 'owner', 'dueDate', 'completedDate', 'state', 'review']) data[key] = textValue(req.body[key] || '', key, 2000, ['item', 'issue', 'state'].includes(key));
-    if (!RATING_ITEMS.some(i => i.id === data.item) || !['待处理', '处理中', '已完成'].includes(data.state)) throw fail('项目或状态无效');
+    if (!rules(db, monthRow(db, month).rule_id).items.some(i => i.id === data.item) || !['待处理', '处理中', '已完成'].includes(data.state)) throw fail('项目或状态无效');
     for (const key of ['dueDate', 'completedDate']) if (data[key] && (!/^20\d{2}-\d{2}-\d{2}$/.test(data[key]) || !Number.isFinite(Date.parse(data[key])) || new Date(data[key]).toISOString().slice(0, 10) !== data[key])) throw fail('日期无效');
     if (data.state === '已完成' && !data.completedDate) throw fail('完成记录须填写实际完成日期');
     if (!req.user.isAdmin) data.review = before?.review || '';
@@ -233,8 +233,17 @@ export function createRatingApi(db, { secureCookies = false, publicOrigin = '' }
   api.post('/rules', auth.requireAdmin, (req, res) => res.json(transaction(db, () => {
     if (req.body.baseId !== rules(db).id) throw fail('规则已更新，请刷新核对', 409);
     const items = req.body.items;
-    if (!Array.isArray(items) || items.length !== 8 || items.some((i, n) => i.id !== RATING_ITEMS[n].id || i.group !== RATING_ITEMS[n].group || !Number.isInteger(i.max) || i.max < 1 || i.max > 100) || items.reduce((s, i) => s + i.max, 0) !== 100) throw fail('需保留8项及原维度，各项为正整数且合计100分');
-    const clean = items.map((i, n) => ({ ...RATING_ITEMS[n], max: i.max, standard: textValue(i.standard, '评分标准', 2000) }));
+    if (!Array.isArray(items) || !items.length || items.length > 100) throw fail('请保留至少1项评分项目，最多100项');
+    const ids = new Set();
+    const clean = items.map((i, n) => {
+      if (!i || typeof i !== 'object' || Array.isArray(i) || typeof i.id !== 'string' || !/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,79}$/.test(i.id) || Object.hasOwn(Object.prototype, i.id) || i.id === 'prototype' || ids.has(i.id)) throw fail(`第${n + 1}项标识无效或重复`);
+      ids.add(i.id);
+      if (!Number.isInteger(i.max) || i.max < 1 || i.max > 100) throw fail(`第${n + 1}项满分须为1至100的整数`);
+      const references = i.references === undefined ? ratingReferences(i) : i.references;
+      if (!Array.isArray(references) || references.length !== 5 || references.some((v, index) => !Number.isInteger(v) || v < 0 || v > i.max || (index > 0 && v > references[index - 1]))) throw fail(`第${n + 1}项参考分值须为5个从高到低的整数，范围为0至${i.max}`);
+      return { id: i.id, group: textValue(i.group, `第${n + 1}项维度`, 50), name: textValue(i.name, `第${n + 1}项项目`, 100), max: i.max, standard: textValue(i.standard, `第${n + 1}项标准`, 2000), references };
+    });
+    if (clean.reduce((sum, i) => sum + i.max, 0) !== 100) throw fail('各项满分合计必须为100分');
     db.prepare('INSERT INTO rating_rules(data_json,created_at) VALUES(?,?)').run(JSON.stringify({ items: clean }), now());
     history(db, req.user, '发布新评分规则', '', '', { items: clean }); return rules(db);
   })));

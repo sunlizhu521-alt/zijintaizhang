@@ -14,7 +14,7 @@ export default function Scoring({ bundle, user, perform, busy, Modal }) {
     <section className="panel scoring-panel">
       <div className="section-heading"><div><h2>我的供应商评分</h2><p className="muted">全部 {assigned.length} 家供应商，每家一行。填写 {bundle.rule.items.length} 项分数，扣分时补充依据，再逐行保存或提交。</p></div><span className="tag">本月规则 V{bundle.rule.id}</span></div>
       {bundle.month.status !== 'open' && <p className="notice" role="status">{bundle.month.status === 'paused' ? '此月份已临时关闭，请等待管理员恢复评分。' : '此月份已结月，评分仅供查看。'}已有评分和依据均已保留。</p>}
-      {assigned.length ? <div className="scroll scoring-scroll" role="region" aria-label="我的供应商评分表，可左右滚动" tabIndex="0"><table className="scoring-table">
+      {assigned.length ? <div className="scroll scoring-scroll" role="region" aria-label="我的供应商评分表，可左右滚动" tabIndex="0"><table className="scoring-table" style={{ minWidth: Math.max(800, 700 + bundle.rule.items.length * 80) }}>
         <thead><tr><th scope="col" className="supplier-cell">供应商名称</th>{bundle.rule.items.map(item => <th scope="col" key={item.id} title={item.standard}>{item.name}<small>{item.max} 分</small></th>)}<th scope="col">合计</th><th scope="col">评分依据</th><th scope="col">已核实</th><th scope="col">状态</th><th scope="col" className="row-actions">操作</th></tr></thead>
         <tbody>{assigned.map(a => <ScoreRow key={a.supplier_id} assignment={a} saved={scores.get(a.supplier_id)} bundle={bundle} user={user} perform={perform} busy={busy} Modal={Modal} />)}</tbody>
       </table></div> : <div className="empty">本月履约表中尚未识别到您对应的供应商，请联系管理员核对。</div>}
