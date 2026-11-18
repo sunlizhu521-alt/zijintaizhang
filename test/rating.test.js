@@ -10,10 +10,11 @@ import { openDatabase } from '../server/db.js';
 import { initAdmin } from '../server/auth.js';
 import { createApp } from '../server/app.js';
 import { RATING_ITEMS, ratingGrade } from '../shared/rating.js';
-import { parseRatingSuppliers } from '../server/rating-excel.js';
+import { parseRatingSuppliers, supplierTemplate } from '../server/rating-excel.js';
 import { parseAssignmentWorkbook } from '../server/rating-assignment-import.js';
 import { reviewSupplierNames } from '../shared/rating-supplier-match.js';
 const base = '/gongyingshangpingji/api';
+const valueAt = (sheet, header, row = 2) => { const column = sheet.getRow(1).values.indexOf(header); assert.ok(column > 0, header); return sheet.getCell(row, column).value; };
 async function fixture(t) {
   const dir = mkdtempSync(join(tmpdir(), 'supplier-rating-'));
   // Route tests must also work in a fresh checkout before the frontend build.
@@ -91,8 +92,8 @@ test('评分验证、缺评、零分、个人明细权限、结月重开和历�
   const snaps = f.ratingDb.prepare('SELECT * FROM rating_snapshots ORDER BY version').all(); assert.equal(snaps.length, 2); assert.equal(JSON.parse(snaps[0].data_json).summaries[0].total, 50); assert.equal(JSON.parse(snaps[1].data_json).summaries[0].total, 100);
   const exp = await f.request(base + '/months/2026-10/export?version=1', { session: a }); assert.equal(exp.status, 200);
   const book = new ExcelJS.Workbook(); await book.xlsx.load(Buffer.from(exp.data));
-  assert.equal(book.getWorksheet('评分汇总').getCell('G2').value, 50); assert.equal(book.getWorksheet('个人评分').rowCount, 2);
-  for (const sheet of book.worksheets) { assert.ok(sheet.autoFilter); assert.equal(Object.keys(sheet.tables).length, 0); if (sheet.rowCount > 1) { assert.equal(sheet.getCell('A2').alignment.horizontal, 'center'); assert.equal(sheet.getCell('A2').fill.fgColor.argb, 'FFFFFFFF'); } }
+  assert.equal(valueAt(book.getWorksheet('评分汇总'), '总分'), 50); assert.equal(book.getWorksheet('个人评分').rowCount, 2);
+  for (const sheet of book.worksheets) { assert.ok(!sheet.getRow(1).values.includes('供应商编码')); assert.ok(sheet.autoFilter); assert.equal(Object.keys(sheet.tables).length, 0); if (sheet.rowCount > 1) { assert.equal(sheet.getCell('A2').alignment.horizontal, 'center'); assert.equal(sheet.getCell('A2').fill.fgColor.argb, 'FFFFFFFF'); } }
   const hiddenExport = await f.request(base + '/months/2026-10/export', { session: outsider });
   const hiddenBook = new ExcelJS.Workbook(); await hiddenBook.xlsx.load(Buffer.from(hiddenExport.data)); assert.equal(hiddenBook.getWorksheet('个人评分').rowCount, 1);
 });
@@ -105,7 +106,8 @@ test('季度按月等权、跨期权限、分配快照及规则版本不回写',
   assert.equal((await f.call('/dashboard?year=2026', null, 'GET', b)).periods.length, 0);
   const report = await f.request(base + '/dashboard/export?year=2026&period=Q3', { session: a });
   const quarterly = new ExcelJS.Workbook(); await quarterly.xlsx.load(Buffer.from(report.data));
-  assert.equal(quarterly.getWorksheet('期间评分汇总').getCell('H2').value, 50);
+  for (const sheet of quarterly.worksheets) assert.ok(!sheet.getRow(1).values.includes('供应商编码'));
+  assert.equal(valueAt(quarterly.getWorksheet('期间评分汇总'), '总分'), 50);
   const deniedReport = await f.request(base + '/dashboard/export?year=2026&period=Q3', { session: b });
   const deniedBook = new ExcelJS.Workbook(); await deniedBook.xlsx.load(Buffer.from(deniedReport.data)); assert.equal(deniedBook.getWorksheet('期间评分汇总').rowCount, 1);
   const rule = (await f.call('/bootstrap')).rule; await f.call('/rules', { baseId: rule.id, items: rule.items.map(i => ({ ...i, standard: '新标准' })) });
@@ -142,7 +144,7 @@ test('临时关闭和恢复校验权限与并发，锁定评分并保留数据�
   assert.equal((await f.call('/dashboard?year=2026')).periods.length, 0);
   const report = await f.request(base + path + '/export', { session: a }); assert.equal(report.status, 200);
   const book = new ExcelJS.Workbook(); await book.xlsx.load(Buffer.from(report.data));
-  assert.equal(book.getWorksheet('评分汇总').getCell('K2').value, '临时关闭');
+  assert.equal(valueAt(book.getWorksheet('评分汇总'), '状态'), '临时关闭');
   assert.match(book.getWorksheet('统计口径').getCell('B7').value, /临时关闭/);
   await f.call(`/records/${randomUUID()}`, { month, supplierId: id, revision: 0, item: 'ontime', issue: '暂停期间继续整改', state: '处理中' }, 'PUT', a);
   await f.call(path + '/resume', { revision: 2 });
@@ -183,25 +185,50 @@ test('过程记录隐私、日期边界与关闭月份后持续整改', async t 
   await f.call(`/records/${saved.id}`, { ...record, revision: 1, dueDate: '2026-10-31', completedDate: '2026-11-01', state: '已完成', review: '采购已复核' }, 'PUT');
   assert.equal((await f.call('/months/2026-10')).records[0].review, '采购已复核');
 });
-test('供应商Excel编码前导零、重复与公式拒绝', async () => {
-  const book = new ExcelJS.Workbook(), s = book.addWorksheet('供应商名单'); s.addRow(['供应商编码', '供应商名称', '状态']); s.addRow(['001', '合成供应商', '启用']); s.addRow([2, '另一家', '停用']); s.getCell('A3').numFmt = '000';
-  const rows = await parseRatingSuppliers(Buffer.from(await book.xlsx.writeBuffer())); assert.equal(rows[0].code, '001'); assert.equal(rows[1].code, '002'); assert.equal(rows[1].active, false);
-  s.getCell('A3').value = '001'; await assert.rejects(parseRatingSuppliers(Buffer.from(await book.xlsx.writeBuffer())), /重复编码/);
-  s.getCell('A3').value = { formula: '1+2', result: 3 }; await assert.rejects(parseRatingSuppliers(Buffer.from(await book.xlsx.writeBuffer())), /不能是公式/);
+test('供应商名单仅名称即可导入，同名去重且冲突、空值与公式有明确校验', async () => {
+  const template = new ExcelJS.Workbook(); await template.xlsx.load(Buffer.from(await supplierTemplate()));
+  assert.deepEqual(template.getWorksheet('供应商名单').getRow(1).values.slice(1), ['供应商名称']);
+  const book = new ExcelJS.Workbook(), s = book.addWorksheet('供应商名单');
+  s.addRow(['供应商名称']); s.addRow(['合成供应商']); s.addRow(['合成供应商']); s.addRow(['另一家']); s.addRow(['']); s.addRow([0]);
+  let rows = await parseRatingSuppliers(Buffer.from(await book.xlsx.writeBuffer()));
+  assert.deepEqual(rows, [{name:'合成供应商'}, {name:'另一家'}, {name:'0'}]);
+  s.getCell('B1').value='状态'; s.getCell('B3').value='停用';
+  await assert.rejects(parseRatingSuppliers(Buffer.from(await book.xlsx.writeBuffer())), /状态不一致/);
+  s.getCell('B3').value=''; s.getCell('A4').value={formula:'"另一家"',result:'另一家'};
+  await assert.rejects(parseRatingSuppliers(Buffer.from(await book.xlsx.writeBuffer())), /不能是公式/);
+  s.getCell('A4').value=''; s.getCell('B4').value='启用';
+  await assert.rejects(parseRatingSuppliers(Buffer.from(await book.xlsx.writeBuffer())), /未填写/);
+  s.getCell('A4').value='另一家'; s.getCell('B4').value='未知';
+  await assert.rejects(parseRatingSuppliers(Buffer.from(await book.xlsx.writeBuffer())), /状态须为/);
+  s.getCell('B4').value=''; s.getCell('A1').value='供应商'; s.getCell('C1').value='供应商编码'; s.getCell('C2').value='随表旧编号';
+  rows=await parseRatingSuppliers(Buffer.from(await book.xlsx.writeBuffer())); assert.equal(rows[0].name,'合成供应商'); assert.equal(rows[0].code,undefined);
+  s.getCell('C1').value='供应商简称'; await assert.rejects(parseRatingSuppliers(Buffer.from(await book.xlsx.writeBuffer())), /唯一/);
+  const empty=new ExcelJS.Workbook(); empty.addWorksheet('供应商名单').addRow(['供应商名称']);
+  await assert.rejects(parseRatingSuppliers(Buffer.from(await empty.xlsx.writeBuffer())), /没有有效供应商/);
 });
 
-test('供应商导入预览保留原件，冲突不覆盖，确认后可持久化读取', async t => {
-  const f = await fixture(t); const id = await f.supplier();
-  const book = new ExcelJS.Workbook(), sheet = book.addWorksheet('供应商名单'); sheet.addRow(['供应商编码','供应商名称']); sheet.addRow(['001','导入的新名称']); sheet.addRow(['002','新供应商']);
-  const buffer = Buffer.from(await book.xlsx.writeBuffer());
-  const preview = async () => { const form = new FormData(); form.append('file', new Blob([buffer]), '名单.xlsx'); const r = await fetch(f.origin + base + '/suppliers/import/preview', { method:'POST', headers: {Cookie:f.admin.cookie,'X-CSRF-Token':f.admin.csrfToken,Origin:f.origin}, body:form }); assert.equal(r.status,200); return r.json(); };
-  const first = await preview(); assert.equal(first.rows[0].before.name,'合成供应商001');
-  await f.call('/suppliers/'+id, {code:'001',name:'同时人工修改',active:true,revision:1}, 'PUT');
+test('仅名称导入保留原件与停用状态，重复和并发不会覆盖历史或重复建档', async t => {
+  const f=await fixture(t), id=await f.supplier();
+  const book=new ExcelJS.Workbook(), sheet=book.addWorksheet('供应商名单');
+  sheet.addRow(['供应商名称']); sheet.addRow(['合成供应商001']); sheet.addRow(['新供应商']); sheet.addRow(['新供应商']);
+  const buffer=Buffer.from(await book.xlsx.writeBuffer());
+  const preview=async()=>{const form=new FormData();form.append('file',new Blob([buffer]),'名单.xlsx');const r=await fetch(f.origin+base+'/suppliers/import/preview',{method:'POST',headers:{Cookie:f.admin.cookie,'X-CSRF-Token':f.admin.csrfToken,Origin:f.origin},body:form});assert.equal(r.status,200);return r.json();};
+  const first=await preview(); assert.equal(first.rows.length,2); assert.equal(first.rows[0].before.id,id);
+  await f.call('/suppliers/'+id,{name:'合成供应商001',active:false,revision:1},'PUT');
   await f.call('/suppliers/import/commit',{id:first.id},'POST',f.admin,409);
-  assert.equal(f.ratingDb.prepare('SELECT name FROM rating_suppliers WHERE id=?').get(id).name,'同时人工修改');
-  const next = await preview(); await f.call('/suppliers/import/commit',{id:next.id});
-  assert.equal(f.ratingDb.prepare('SELECT name FROM rating_suppliers WHERE id=?').get(id).name,'导入的新名称');
-  assert.deepEqual(Buffer.from(f.ratingDb.prepare('SELECT content FROM rating_imports WHERE id=?').get(next.id).content),buffer);
+  const next=await preview(); assert.equal(next.rows[0].active,false);
+  const other=await f.call('/suppliers',{name:'新供应商'});
+  await f.call('/suppliers/import/commit',{id:next.id},'POST',f.admin,409);
+  assert.equal(f.ratingDb.prepare('SELECT revision FROM rating_suppliers WHERE id=?').get(id).revision,2);
+  const final=await preview(); await f.call('/suppliers/import/commit',{id:final.id});
+  assert.equal(f.ratingDb.prepare('SELECT active FROM rating_suppliers WHERE id=?').get(id).active,0);
+  assert.equal(f.ratingDb.prepare('SELECT count(*) n FROM rating_suppliers').get().n,2);
+  await f.call('/suppliers',{name:'新供应商'},'POST',f.admin,409);
+  await f.call('/suppliers',{name:''},'POST',f.admin,400);
+  await f.call('/suppliers/'+other.id,{name:'合成供应商001',revision:2},'PUT',f.admin,409);
+  const repeated=await preview(); await f.call('/suppliers/import/commit',{id:repeated.id});
+  assert.equal(f.ratingDb.prepare('SELECT count(*) n FROM rating_suppliers').get().n,2);
+  assert.deepEqual(Buffer.from(f.ratingDb.prepare('SELECT content FROM rating_imports WHERE id=?').get(final.id).content),buffer);
   assert.equal(f.ratingDb.prepare('PRAGMA quick_check').get().quick_check,'ok');
 });
 
@@ -253,6 +280,7 @@ test('首次履约表中确认同一家只建一条记录，拒绝跨范围、�
   const preview = await previewAssignments(f, buffer), endpoint = '/months/2026-10/assignment-import/commit';
   const review = reviewSupplierNames(preview, new Set([0, 1]), { 1: { sameAs: 'source:0' } });
   const choices = importChoices(preview, s => review.find(r => r.index === s.index).target);
+  await f.call(endpoint, { ...choices, sheets: choices.sheets.map(choice => ({ ...choice, userId: f.admin.user.id })) }, 'POST', f.admin, 400);
   for (const suppliers of [choices.suppliers.map(s => ({ ...s, supplierId: `source:${s.index}` })), [{ index: 0, supplierId: 'source:1' }, { index: 1, supplierId: 'source:0' }], [{ index: 0, supplierId: 'new' }, { index: 1, supplierId: 'source:999' }]]) {
     await f.call(endpoint, { ...choices, suppliers }, 'POST', f.admin, 400);
   }
@@ -263,6 +291,13 @@ test('首次履约表中确认同一家只建一条记录，拒绝跨范围、�
   const bundle = await f.call('/months/2026-10');
   assert.equal(bundle.assignments[0].name, '深圳市云帆电机有限公司');
   assert.deepEqual(bundle.assignments[0].raters.map(u => u.id).sort(), [a.user.id, b.user.id].sort());
+  const supplierId=bundle.assignments[0].supplier_id;
+  await f.submit('2026-10',supplierId,a,1);
+  let monthView=await f.call('/months/2026-10'); assert.equal(monthView.summaries[0].expected,2); assert.equal(monthView.summaries[0].count,1);
+  assert.equal((await f.call('/months/2026-10',null,'GET',b)).scores.length,0);
+  await f.submit('2026-10',supplierId,b,0);
+  monthView=await f.call('/months/2026-10'); assert.equal(monthView.summaries[0].count,2); assert.equal(monthView.summaries[0].total,50);
+  assert.deepEqual(monthView.scores.map(score=>score.user_id).sort(),[a.user.id,b.user.id].sort());
   const log = JSON.parse(f.ratingDb.prepare("SELECT data_json FROM rating_history WHERE action='导入履约表分配评价人'").get().data_json);
   assert.deepEqual(log.changes[0].sources.map(s => s.supplier), ['深圳市云帆电机有限公司', '云帆电机']);
   const repeated = await previewAssignments(f, buffer), id = bundle.assignments[0].supplier_id;
@@ -331,7 +366,11 @@ test('履约表预览校验缺失映射、并发修改、暂停和不参评，�
   assert.equal(f.ratingDb.prepare('SELECT count(*) n FROM rating_suppliers').get().n, 1);
   assert.equal(f.ratingDb.prepare('SELECT count(*) n FROM rating_assignments').get().n, 1);
   assert.equal(f.ratingDb.prepare('SELECT committed FROM rating_assignment_imports WHERE id=?').get(preview.id).committed, 0);
-  await f.call('/months/2026-10/close', { revision: 3 }); await previewAssignments(f, buffer, f.admin, 409);
+  await f.call(`/months/2026-10/assignments/${id}`, { revision: 3, userIds: [], exempt: false, reason: '' }, 'PUT');
+  const restored = await previewAssignments(f, buffer);
+  await f.call(endpoint, importChoices(restored, s => s.matchedSupplierId || 'new'));
+  assert.deepEqual((await f.call('/months/2026-10')).assignments.find(s => s.supplier_id === id).raters.map(r => r.id), [a.user.id]);
+  await f.call('/months/2026-10/close', { revision: 3, confirmPartial: true, reason: '恢复后仍缺评' }); await previewAssignments(f, buffer, f.admin, 409);
 });
 test('履约表解析保留原文名称和行号，隐藏表、空白、合并单元格与公式边界明确', async () => {
   const book = new ExcelJS.Workbook(), s = book.addWorksheet('工作表命名人');

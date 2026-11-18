@@ -11,7 +11,7 @@ function similarity({ key: a, pairs: x }, { key: b, pairs: y }) {
 
 // Similarity proposes a comparison only. Different names never merge without a decision.
 export function reviewSupplierNames(preview, needed, decisions = {}) {
-  const options = preview.existingSuppliers.map(s => ({ id: s.id, name: s.name, canonicalName: s.name, code: s.code, comparison: comparison(s.name) }));
+  const options = preview.existingSuppliers.map(s => ({ id: s.id, name: s.name, canonicalName: s.name, comparison: comparison(s.name) }));
   const rows = [];
   for (const source of preview.suppliers.filter(s => needed.has(s.index)).sort((a, b) => a.index - b.index)) {
     const decision = decisions[source.index] || {}, candidates = new Map(), sourceComparison = comparison(source.name);

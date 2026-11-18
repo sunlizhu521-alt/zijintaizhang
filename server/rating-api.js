@@ -10,7 +10,7 @@ import { supplierTemplate, exportRating, exportRatingPeriod } from './rating-exc
 import { prepareAssignmentImport, applyAssignmentImport } from './rating-assignment-import.js';
 const can = (user, key) => user.isAdmin || user.permissions.includes(key);
 function exportResponse(res, name, buffer) { res.attachment(`${name}.xlsx`).type('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet').send(Buffer.from(buffer)); }
-function supplierInput(input) { return { code: textValue(input.code, '供应商编码', 80), name: textValue(input.name, '供应商名称', 200), active: input.active !== false }; }
+function supplierInput(input, before) { return { code: textValue(input.code ?? before?.code ?? `S${randomUUID()}`, '供应商标识', 80), name: textValue(input.name, '供应商名称', 200), active: input.active === undefined ? before ? !!before.active : true : input.active !== false }; }
 export function createRatingApi(db, { secureCookies = false, publicOrigin = '' } = {}) {
   initializeRating(db);
   const api = express.Router();
@@ -58,7 +58,8 @@ export function createRatingApi(db, { secureCookies = false, publicOrigin = '' }
     if (!Array.isArray(req.body.userIds) || req.body.userIds.length > 200 || new Set(req.body.userIds).size !== req.body.userIds.length) throw fail('评价人名单无效');
     const raters = req.body.userIds.map(id => { const row = db.prepare('SELECT * FROM users WHERE id=?').get(id); if (!row || (!row.active && !before?.raters.some(r => r.id === id)) || (!row.is_admin && !JSON.parse(row.permissions_json).includes('rate'))) throw fail('评价人不存在、停用或没有评分权限'); return { id, name: row.display_name }; });
     const exempt = req.body.exempt === true, reason = textValue(req.body.reason || '', '不参评原因', 2000, exempt);
-    if (!exempt && !raters.length) throw fail('请选择至少一位评价人');
+    // Legacy exempt entries may have no raters; restore first, then the workbook fills them.
+    if (!exempt && !raters.length && !(before?.exempt && !before.raters.length)) throw fail('请上传履约表识别至少一位评价人');
     const submitted = db.prepare("SELECT user_id FROM rating_scores WHERE month=? AND supplier_id=? AND status='submitted'").all(month, supplierId);
     if (submitted.some(s => exempt || !raters.some(r => r.id === s.user_id))) throw fail('请先由原评价人撤回已提交评分，再调整范围', 409);
     const data = { code: before?.code || supplier.code, name: before?.name || supplier.name, raters, exempt, reason };
@@ -159,17 +160,19 @@ export function createRatingApi(db, { secureCookies = false, publicOrigin = '' }
   api.post('/suppliers', auth.requireAdmin, (req, res) => res.json(transaction(db, () => {
     const s = supplierInput(req.body);
     if (db.prepare('SELECT id FROM rating_suppliers WHERE code=?').get(s.code)) throw fail('供应商编码已存在', 409);
+    if (db.prepare('SELECT id FROM rating_suppliers WHERE name=?').get(s.name)) throw fail('供应商名称已存在，请在名单中查看或编辑', 409);
     const id = randomUUID(); db.prepare('INSERT INTO rating_suppliers(id,code,name,active) VALUES(?,?,?,?)').run(id, s.code, s.name, Number(s.active));
     history(db, req.user, '新增供应商', '', id, s); return { id };
   })));
   api.put('/suppliers/:id', auth.requireAdmin, (req, res) => res.json(transaction(db, () => {
     const before = db.prepare('SELECT * FROM rating_suppliers WHERE id=?').get(req.params.id);
     if (!before) throw fail('供应商不存在', 404); checkRevision(before, req.body.revision);
-    const s = supplierInput(req.body); if (s.code !== before.code) throw fail('历史关联使用供应商编码，编码不能修改');
+    const s = supplierInput(req.body, before); if (s.code !== before.code) throw fail('供应商历史关联不能修改');
+    if (db.prepare('SELECT id FROM rating_suppliers WHERE name=? AND id<>?').get(s.name, before.id)) throw fail('该供应商名称已存在，请核对是否同一家', 409);
     db.prepare('UPDATE rating_suppliers SET name=?,active=?,revision=revision+1 WHERE id=?').run(s.name, Number(s.active), before.id);
     history(db, req.user, '更新供应商', '', before.id, { before, after: s }); return { ok: true };
   })));
-  api.get('/suppliers/template', auth.requireAdmin, async (_req, res) => exportResponse(res, '供应商名单模板_V1', await supplierTemplate()));
+  api.get('/suppliers/template', auth.requireAdmin, async (_req, res) => exportResponse(res, '供应商名单模板_仅名称', await supplierTemplate()));
   const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024, files: 1, fields: 0, parts: 1 } });
   api.post('/months/:month/assignment-import/preview', auth.requireAdmin, upload.single('file'), async (req, res) => {
     monthRow(db, req.params.month, true);
@@ -198,7 +201,12 @@ export function createRatingApi(db, { secureCookies = false, publicOrigin = '' }
     if (!req.file || !/\.xlsx$/i.test(req.file.originalname)) throw fail('请选择 .xlsx 文件');
     const rows = await runParser('ratingSuppliers', req.file.buffer, {});
     auth.authenticate(req, res, () => auth.requireAdmin(req, res, () => {
-      const preview = rows.map(row => { const before = db.prepare('SELECT * FROM rating_suppliers WHERE code=?').get(row.code); return { ...row, before: before || null }; });
+      const preview = rows.map(row => {
+        const matches = db.prepare('SELECT * FROM rating_suppliers WHERE name=?').all(row.name);
+        if (matches.length > 1) throw fail(`“${row.name}”存在多条同名记录，请先在名单中核对`, 409);
+        const before = matches[0];
+        return { ...row, code: before?.code || `S${randomUUID()}`, active: row.active ?? (before ? !!before.active : true), byName: true, before: before || null };
+      });
       const id = randomUUID();
       db.prepare('DELETE FROM rating_imports WHERE committed=0 AND created_at<?').run(new Date(Date.now() - 3600000).toISOString());
       db.prepare('INSERT INTO rating_imports(id,user_id,filename,content,data_json,created_at) VALUES(?,?,?,?,?,?)').run(id, req.user.id, Buffer.from(req.file.originalname, 'latin1').toString('utf8').slice(0, 240), req.file.buffer, JSON.stringify(preview), now());
@@ -210,6 +218,10 @@ export function createRatingApi(db, { secureCookies = false, publicOrigin = '' }
     if (!draft) throw fail('导入预览失效，请重新上传', 409);
     const rows = JSON.parse(draft.data_json);
     for (const s of rows) {
+      if (s.byName) {
+        const matches = db.prepare('SELECT * FROM rating_suppliers WHERE name=?').all(s.name);
+        if (matches.length > 1 || (matches[0]?.id || null) !== (s.before?.id || null)) throw fail('供应商名单已变化，请重新上传核对', 409);
+      }
       const before = db.prepare('SELECT * FROM rating_suppliers WHERE code=?').get(s.code);
       checkRevision(before, s.before?.revision || 0);
       if (before) db.prepare('UPDATE rating_suppliers SET name=?,active=?,revision=revision+1 WHERE id=?').run(s.name, Number(s.active), before.id);

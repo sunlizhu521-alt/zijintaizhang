@@ -84,7 +84,9 @@ export function applyAssignmentImport(db, actor, draft, selection) {
     if (!choice || !Number.isInteger(choice.index) || !data.sheets[choice.index] || sheets.has(choice.index)) throw fail('工作表选择无效或重复');
     const user = current.users.find(u => u.id === choice.userId && eligible(u));
     if (!user) throw fail('所选评价人未启用或没有评分权限', 409);
-    const sheet = data.sheets[choice.index]; sheets.set(choice.index, { sheet, user });
+    const sheet = data.sheets[choice.index];
+    if (sheet.matchedUserId && choice.userId !== sheet.matchedUserId) throw fail('评价人应与工作表命名人一致，请重新上传核对');
+    sheets.set(choice.index, { sheet, user });
     sheet.suppliers.forEach(s => needed.add(s.index));
   }
   const choices = new Map();
