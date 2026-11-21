@@ -171,7 +171,21 @@ function headersOf(sheet) {
       const label = textOf(cell);
       if (label) headers.push({ label, name: normalize(label), column });
     });
-    if (headers.some(header => ['供应商', '供应商名称'].includes(header.name))) return { rowNumber, headers };
+    const supplier = headers.find(header => ['供应商', '供应商名称'].includes(header.name));
+    if (supplier) {
+      const anchor = sheet.getRow(rowNumber).getCell(supplier.column).master;
+      let lastHeaderRow = rowNumber;
+      // 合并表头下半行仍返回“供应商”等主格文本，不能当作业务记录。
+      while (lastHeaderRow < sheet.rowCount && sheet.getRow(lastHeaderRow + 1).getCell(supplier.column).master === anchor) lastHeaderRow++;
+      const byColumn = new Map(headers.map(header => [header.column, header]));
+      for (let number = rowNumber + 1; number <= lastHeaderRow; number++) {
+        sheet.getRow(number).eachCell({ includeEmpty: false }, (cell, column) => {
+          const label = textOf(cell);
+          if (label) byColumn.set(column, { label, name: normalize(label), column });
+        });
+      }
+      return { rowNumber: lastHeaderRow, headers: [...byColumn.values()].sort((a, b) => a.column - b.column) };
+    }
   }
   return { rowNumber: 1, headers: [] };
 }

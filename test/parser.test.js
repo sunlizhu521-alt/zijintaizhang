@@ -190,6 +190,59 @@ test('谈判分类缺失、未知或缺表头时拒绝并定位，不默认为�
   await assert.rejects(parseWorkbook(await asBuffer(workbook), { slotId: 'schedule' }), error => error.status === 422 && error.issues.some(issue => issue.sourceSheet === '谈判付款' && issue.sourceRow === 1 && issue.message.includes('是否谈判分批')));
 });
 
+function mergedScheduleBook() {
+  const fixture = scheduleBook();
+  const sheet = fixture.negotiated;
+  sheet.insertRow(2, []);
+  for (let column = 1; column <= negotiatedHeaders.length; column++) sheet.mergeCells(1, column, 2, column);
+  sheet.mergeCells('P1:R1');
+  sheet.getCell('P1').value = '分批付款安排';
+  for (const [column, date, amount, comment] of [
+    ['P', '2026年11月2日', 500, '申请日期（付款节奏跟进）：2026年10月26日\n付款时间（付款节奏跟进）：2026年11月2日'],
+    ['Q', '2026年12月14日', 734.56, '申请日期（付款节奏跟进）：2026年12月7日'],
+    ['R', '2027年1月18日', 0, ''],
+  ]) {
+    sheet.getCell(`${column}2`).value = date;
+    sheet.getCell(`${column}3`).value = amount;
+    if (comment) sheet.getCell(`${column}3`).note = comment;
+  }
+  return fixture;
+}
+
+test('双行合并表头不计入记录，分批日期及批注从第二行表头读取并保留原始行号', async () => {
+  const { workbook } = mergedScheduleBook();
+  const buffer = await asBuffer(workbook);
+  const inspected = await inspectWorkbook(buffer, 'schedule');
+  assert.equal(inspected.sheets.find(sheet => sheet.name === '谈判付款').recordCount, 1);
+  const parsed = await parseWorkbook(buffer, { slotId: 'schedule' });
+  assert.equal(parsed.records.length, 2);
+  const record = parsed.records[0];
+  assert.equal(record.sourceRow, 3);
+  assert.equal(record.key, 'schedule:谈判付款:3');
+  assert.equal(record.category, 'negotiated');
+  assert.equal(record.raw['2026年11月2日'], 500);
+  assert.equal(record.raw['2027年1月18日'], 0);
+  assert.match(record.comments.P3, /付款时间/);
+  assert.deepEqual(record.plans.map(plan => [plan.month, plan.amountCents, plan.paidCents, plan.unpaidCents, plan.sourceCell]), [
+    ['2026-11', 50000, 50000, 0, 'L3'], ['2026-12', 73456, 0, 73456, 'M3'],
+  ]);
+  assert.deepEqual(record.applicationInstallments.map(item => [item.month, item.amountCents, item.sourceCell]), [
+    ['2026-11', 50000, 'P3'], ['2026-12', 73456, 'Q3'], ['2027-01', 0, 'R3'],
+  ]);
+  assert.equal(parsed.records[1].sourceRow, 2);
+  assert.equal(parsed.records[1].plans[0].paidCents, 100000);
+  assert.ok(!parsed.issues.some(issue => issue.sourceSheet === '谈判付款' && issue.sourceRow === 2));
+});
+
+test('双行表头后的真实数据仍校验是否分批，不跳过或猜测无效分类', async () => {
+  const { workbook, negotiated } = mergedScheduleBook();
+  for (const value of [null, '是否谈判分批', '待定']) {
+    negotiated.getCell('O3').value = value;
+    await assert.rejects(parseWorkbook(await asBuffer(workbook), { slotId: 'schedule' }), error =>
+      error.status === 422 && error.issues.some(issue => issue.sourceRow === 3 && issue.message.includes('O3')));
+  }
+});
+
 test('付款申请、已付、剩余的空值和无缓存公式保存为零，月支付公式不凭空计算', async () => {
   const { workbook, negotiated, normal } = scheduleBook();
   for (const address of ['F2', 'H2', 'I2']) negotiated.getCell(address).value = { formula: '1+2' };
