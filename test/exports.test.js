@@ -28,8 +28,8 @@ test('导出按新版期间统计且保留精确元、待定来源与未知付�
   for (const label of ['期间已付', '期间未付', '已申请未付']) assert.equal(value(stats, label, '金额或说明'), '待核对');
   assert.equal(value(book.getWorksheet('月度付款汇总'), '总合计', '所选期间合计（元）'), 100.01);
   assert.equal(value(book.getWorksheet('时间待定付款汇总'), '总合计', '时间待定合计（元）'), 3.21);
-  assert.equal(value(book.getWorksheet('筛选明细'), '谈判表-谈判付款', '原台账累计已付'), 25);
-  assert.equal(value(book.getWorksheet('筛选明细'), '谈判表-谈判付款', '选定范围已付（新规则）'), '待核对');
+  assert.equal(value(book.getWorksheet('筛选明细'), '谈判付款-谈判付款表', '原台账累计已付'), 25);
+  assert.equal(value(book.getWorksheet('筛选明细'), '谈判付款-谈判付款表', '选定范围已付（新规则）'), '待核对');
   assert.equal(value(book.getWorksheet('付款明细'), '合成供应商', '总金额（元）'), 100.01);
   assert.equal(value(book.getWorksheet('付款明细'), '合成供应商', '已申请未付金额（元）'), '待核对');
   assert.equal(value(book.getWorksheet('付款明细'), '合成供应商', '未申请金额（元）'), 0);

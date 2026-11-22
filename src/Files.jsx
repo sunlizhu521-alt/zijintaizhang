@@ -44,7 +44,7 @@ export default function Files({ user, orders = false }) {
   }
   return <div className="page-stack">
     <div className="page-heading"><div><p className="eyebrow">{orders ? '订单文件 · 版本留存' : '四个槽位 · 独立更新'}</p><h1>{orders ? '采购订单跟进' : '文件管理'}</h1><p className="subtitle">{orders ? '上传金蝶导出的采购订单，集中保存最新文件与历史版本。' : '在 Excel 修改业务数据，上传校验后替换当前版本。'}</p></div><button onClick={() => setRefresh(value => value + 1)} disabled={loading || Boolean(busy)}>刷新状态</button></div>
-    {!orders && <Notice>“谈判付款”按“是否谈判分批”分为谈判表-谈判付款（是）和谈判表-正常付款（否）；“正常付款”中填写“预估时间”的归为正常付款-未完成对账，其余归为正常付款-已对账。三个预估槽位各自上传实际数据。</Notice>}
+    {!orders && <Notice>“谈判付款”按“是否谈判分批”分为谈判付款-谈判付款表（是）和正常付款-谈判付款表（否）；“正常付款”中填写“预估时间”的归为正常付款-未完成对账，其余归为正常付款-正常对账表。三个预估槽位各自上传实际数据。</Notice>}
     <ErrorNotice error={error || (!preview ? actionError : null)} /><Notice type="success">{message}</Notice>
     {loading ? <Loading /> : <div className={`file-grid${orders ? ' order-file-grid' : ''}`}>{definitions.map(definition => {
       const slot = { ...definition, ...slots.find(value => value.id === definition.id) };

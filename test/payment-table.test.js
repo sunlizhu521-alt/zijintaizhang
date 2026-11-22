@@ -148,7 +148,7 @@ test('正常付款包含其余六个子类，月度和待定结构一致且总�
   const data = buildDashboard(categories.map((category, i) => record(category, [plan('2027-01', (i + 1) * 100, 0), plan(null, i + 1)])), [], slots);
   for (const table of [data.paymentTable, data.pendingPaymentTable]) {
     assert.deepEqual(table.rows.filter(row => row.parentId === 'normal_group').map(row => row.label),
-      ['谈判表-正常付款', '正常付款-已对账', '正常付款-未完成对账', '发货计划预估', '售后配件预估', '已发货未登记台账预估']);
+      ['正常付款-谈判付款表', '正常付款-正常对账表', '正常付款-未完成对账', '发货计划预估', '售后配件预估', '已发货未登记台账预估']);
     assert.deepEqual(table.rows.filter(row => !row.parentId).map(row => row.label), ['谈判付款', '正常付款', '总合计']);
     const month = table === data.paymentTable ? '2027-01' : 'pending';
     const factor = table === data.paymentTable ? 100 : 1;
