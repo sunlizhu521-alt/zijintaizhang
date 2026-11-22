@@ -20,7 +20,7 @@ const selectedPlans = record => record.selectedPlans || record.plans || [];
 
 export function dashboardExportScope(query) {
   const scope = {};
-  for (const key of ['exportView', 'detailSupplier', 'table', 'rowId', 'detailMonth', 'measure', 'recordKey']) {
+  for (const key of ['exportView', 'detailSupplier', 'table', 'rowId', 'detailMonth', 'measure', 'recordKey', 'supplierSearch']) {
     if (!Object.hasOwn(query, key)) continue;
     if (typeof query[key] !== 'string' || query[key].length > 500) invalid();
     scope[key] = query[key];
@@ -35,7 +35,7 @@ export function dashboardExportScope(query) {
     if (!['monthly', 'pending'].includes(scope.table) || !scope.rowId || !scope.detailMonth || !measures.some(([key]) => key === scope.measure)) invalid();
     if (scope.table === 'pending' ? scope.detailMonth !== 'pending' : scope.detailMonth !== 'period' && !/^\d{4}-(0[1-9]|1[0-2])$/.test(scope.detailMonth)) invalid();
     if (Object.hasOwn(scope, 'recordKey') && !scope.recordKey) invalid();
-  } else if (['table', 'rowId', 'detailMonth', 'measure', 'recordKey'].some(key => Object.hasOwn(scope, key))) invalid();
+  } else if (['table', 'rowId', 'detailMonth', 'measure', 'recordKey', 'supplierSearch'].some(key => Object.hasOwn(scope, key))) invalid();
   return scope;
 }
 
@@ -161,7 +161,7 @@ export async function scopedDashboardExport(data, scope, filters = {}) {
     const row = table.rows.find(item => item.id === scope.rowId);
     if (!row || scope.detailMonth !== 'period' && !table.months.includes(scope.detailMonth)) invalid();
     records = detailRecords(scope.table === 'pending' ? data.pendingRecords : data.records,
-      { categories: row.categories, month: scope.detailMonth, measure: scope.measure });
+      { categories: row.categories, month: scope.detailMonth, measure: scope.measure, supplierSearch: scope.supplierSearch });
     if (scope.recordKey) {
       records = records.filter(record => record.key === scope.recordKey);
       if (!records.length) invalid('该记录已不在当前下载范围，请刷新页面后重试。');

@@ -28,6 +28,34 @@ function rows(sheet) {
 }
 const selection = { exportView: 'drilldown', table: 'monthly', rowId: 'negotiated_group', detailMonth: 'period', measure: 'unappliedUnpaidCents' };
 
+test('月份明细供应商搜索与下载共用筛选，保留零和未知、不越过分类月份或本笔范围', async () => {
+  const first = record('2', '测试ABC（上海）', [plan('2026-11', 10001), plan('2026-12', 30002)]);
+  const zero = record('3', '测试abc（深圳）', [plan('2026-11', 0)]);
+  const unknown = record('4', '测试ABC（北京）', [{ ...plan('2026-11', 500), paidCents: null, unpaidCents: null, unappliedUnpaidCents: null }]);
+  const other = record('5', '另一家供应商', [plan('2026-11', 700)]);
+  const wrongCategory = { ...record('6', '测试ABC（上海）', [plan('2026-11', 99999)]), category: 'normal' };
+  const data = dataFor([first, zero, unknown, other, wrongCategory]);
+  const scope = { ...selection, detailMonth: '2026-11', supplierSearch: '  ａｂｃ  ' };
+  const filtered = detailRecords(data.records, { categories: ['negotiated'], month: scope.detailMonth, measure: scope.measure, supplierSearch: scope.supplierSearch });
+  assert.deepEqual(filtered.map(item => item.key), ['2', '3', '4']);
+  assert.equal(filtered[0].selectedPlans.length, 1);
+  const book = await workbook(data, scope);
+  const output = rows(book.getWorksheet('付款金额明细'));
+  assert.deepEqual(output.slice(0, -1).map(item => item['供应商']), filtered.map(item => item.supplier));
+  assert.equal(output.at(-1)['总金额（元）'], 105.01);
+  assert.equal(output.at(-1)['未付（元）'], '待核对');
+  assert.equal(output[1]['总金额（元）'], 0);
+  const noMatches = rows((await workbook(data, { ...scope, supplierSearch: '不存在的供应商' })).getWorksheet('付款金额明细'));
+  assert.equal(noMatches.length, 1);
+  assert.equal(noMatches[0]['总金额（元）'], 0);
+  await assert.rejects(() => workbook(data, { ...scope, recordKey: '5' }), /不在当前下载范围/);
+  assert.equal(detailRecords(data.records, { categories: ['negotiated'], month: '2026-11', measure: 'totalCents', supplierSearch: ' ' }).length, 4);
+  for (const supplierSearch of [[], { value: 'abc' }, 'a'.repeat(501)]) assert.throws(() => dashboardExportScope({ ...scope, supplierSearch }), /下载范围无效/);
+  assert.throws(() => dashboardExportScope({ exportView: 'monthly', supplierSearch: 'abc' }), /下载范围无效/);
+  const ledgerBook = await workbook(data, { ...scope, rowId: 'normal_ledger', measure: 'totalCents' });
+  assert.equal(rows(ledgerBook.getWorksheet('付款金额明细'))[0]['总金额（元）'], 999.99);
+});
+
 test('金额下钻逐计划筛选：跨月不同申请状态、零和未知值与页面一致，保留精确元及依据', async () => {
   const first = plan('2026-11', 10001), applied = plan('2026-12', 30002, 'applied');
   first.applicationEvidence = [{ sourceCell: 'AK2', amountCents: 10001, applicationState: 'unapplied', comment: '申请日期：未填写' }];

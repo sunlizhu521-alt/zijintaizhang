@@ -9,22 +9,26 @@ import './payment-table.css';
 const measures = [['totalCents', '总金额'], ['paidCents', '已支付金额'], ['unpaidCents', '未支付金额'], ['unappliedUnpaidCents', '未提交申请单金额']];
 
 export default function PaymentTable({ table, records = [], pending = false }) {
-  const [expanded, setExpanded] = useState(false);
+  const [expandedGroups, setExpandedGroups] = useState([]);
   const [selection, setSelection] = useState(null);
   const selectedRecords = useMemo(() => detailRecords(records, selection), [records, selection]);
   useEffect(() => { setSelection(null); }, [records]);
   const rows = table?.rows || [];
   const months = table?.months || [];
   const parents = rows.filter(row => !row.parentId && row.id !== 'total');
+  const expanded = parents.some(row => expandedGroups.includes(row.id));
+  const allExpanded = parents.length > 0 && parents.every(row => expandedGroups.includes(row.id));
   const total = rows.find(row => row.id === 'total');
   const title = pending ? '时间待定付款汇总' : '月度付款汇总';
   const hasRecords = table?.hasRecords ?? months.length > 0;
   const columns = pending ? months : [...months, 'period'];
   const monthLabel = month => month === 'period' ? '合计' : monthText(month);
-  const downloadSelection = selection && { exportView: 'drilldown', table: pending ? 'pending' : 'monthly', rowId: selection.rowId, detailMonth: selection.month, measure: selection.measure };
+  const downloadSelection = selection && { exportView: 'drilldown', table: pending ? 'pending' : 'monthly', rowId: selection.rowId, detailMonth: selection.month, measure: selection.measure, supplierSearch: selection.supplierSearch || '' };
 
   function categoryLabel(row) {
-    return <>{row.label}{row.available && row.missingSources?.length > 0 && <small className="ps-partial" title={`尚未上传：${row.missingSources.join('、')}`}>部分上传</small>}</>;
+    const expandable = parents.some(parent => parent.id === row.id);
+    const open = expandedGroups.includes(row.id);
+    return <>{expandable ? <button className="ps-category-toggle" aria-expanded={open} aria-label={`${open ? '收起' : '展开'}${row.label}汇总`} onClick={() => setExpandedGroups(ids => open ? ids.filter(id => id !== row.id) : [...ids, row.id])}><span aria-hidden="true">{open ? '▾' : '▸'}</span> {row.label}</button> : row.label}{row.available && row.missingSources?.length > 0 && <small className="ps-partial" title={`尚未上传：${row.missingSources.join('、')}`}>部分上传</small>}</>;
   }
   function amountCells(row) {
     return columns.flatMap(month => measures.map(([key, label], index) => {
@@ -39,7 +43,7 @@ export default function PaymentTable({ table, records = [], pending = false }) {
 
   return <section className="panel payment-panel" aria-label={title}>
     <div className="section-heading"><div><h2>{title}</h2><p>单位：万元 · 点击金额查看明细</p></div>
-      <div className="download-actions"><DashboardDownload options={{ exportView: pending ? 'pending' : 'monthly' }} />{hasRecords && <button className="text-button" aria-expanded={expanded} aria-label={expanded ? '收起付款分类' : '展开付款分类'} onClick={() => setExpanded(value => !value)}>{expanded ? '收起' : '查看'}</button>}</div>
+      <div className="download-actions"><DashboardDownload options={{ exportView: pending ? 'pending' : 'monthly' }} />{hasRecords && <button className="text-button" aria-expanded={allExpanded} aria-label={allExpanded ? '收起付款分类' : '展开付款分类'} onClick={() => setExpandedGroups(allExpanded ? [] : parents.map(row => row.id))}>{allExpanded ? '收起' : '查看'}</button>}</div>
     </div>
     {!hasRecords ? <Empty title={pending ? '暂无时间待定记录' : '当前区间暂无计划'} /> : <div className="payment-summary-scroll" tabIndex={0} role="region" aria-label={`${title}表格，可横向滚动`}>
       <table className={`payment-summary-table${expanded ? ' ps-expanded' : ''}`} style={{ minWidth: `${(expanded ? 302 : 164) + columns.length * measures.length * 96}px` }} aria-label={pending ? '时间待定付款父子汇总表' : '月度付款父子汇总表'}>
@@ -48,7 +52,7 @@ export default function PaymentTable({ table, records = [], pending = false }) {
           <tr>{columns.flatMap(month => measures.map(([key, label], index) => <th key={`${month}-${key}`} scope="col" title={key === 'unappliedUnpaidCents' ? '未支付金额中，尚未确认提交申请单的部分' : undefined} className={`ps-${key}${index === 0 ? ' ps-month-start' : ''}${month === 'period' ? ' ps-period' : ''}`}>{label}</th>))}</tr>
         </thead>
         {parents.map(parent => {
-          const children = expanded ? rows.filter(row => row.parentId === parent.id) : [];
+          const children = expandedGroups.includes(parent.id) ? rows.filter(row => row.parentId === parent.id) : [];
           return <tbody key={parent.id} className={`ps-family-${parent.id}`}>
             {children.length ? children.map((row, index) => <tr key={row.id} data-row-id={row.id}>
               {index === 0 && <th className="ps-category ps-parent-category" scope="rowgroup" rowSpan={children.length}>{categoryLabel(parent)}</th>}
@@ -59,6 +63,9 @@ export default function PaymentTable({ table, records = [], pending = false }) {
         {total && <tfoot><tr data-row-id="total"><th scope="row" colSpan={expanded ? 2 : 1} className="ps-category">{categoryLabel(total)}</th>{amountCells(total)}</tr></tfoot>}
       </table>
     </div>}
-    {selection && <Modal title={selection.title} onClose={() => setSelection(null)} wide actions={<DashboardDownload options={downloadSelection} />}><PaymentDetails records={selectedRecords} measure={selection.measure} downloadSelection={downloadSelection} /></Modal>}
+    {selection && <Modal title={selection.title} onClose={() => setSelection(null)} wide actions={<DashboardDownload options={downloadSelection} />}>
+      <div className="pd-supplier-search"><label>供应商搜索<input type="search" placeholder="输入供应商名称" maxLength={500} value={selection.supplierSearch || ''} onChange={event => setSelection(current => ({ ...current, supplierSearch: event.target.value }))} /></label>{selection.supplierSearch && <button className="text-button" onClick={() => setSelection(current => ({ ...current, supplierSearch: '' }))}>清除搜索</button>}</div>
+      <PaymentDetails records={selectedRecords} measure={selection.measure} downloadSelection={downloadSelection} />
+    </Modal>}
   </section>;
 }

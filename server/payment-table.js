@@ -7,8 +7,11 @@ const rows = [
   { id: 'negotiated_group', label: '谈判付款', parentId: null, depth: 0, categories: ['negotiated'] },
   leaf('negotiated', 'negotiated_group', 1),
   { id: 'normal_group', label: '正常付款', parentId: null, depth: 0, categories: normal },
-  leaf('negotiated_normal', 'normal_group', 1), leaf('normal', 'normal_group', 1), leaf('normal_unreconciled', 'normal_group', 1),
-  ...forecasts.map(id => leaf(id, 'normal_group', 1)),
+  leaf('negotiated_normal', 'normal_group', 1),
+  { id: 'normal_ledger', label: '正常付款-资金台账表', parentId: 'normal_group', depth: 1, categories: ['normal', 'normal_unreconciled'] },
+  { ...leaf('unregistered', 'normal_group', 1), label: '正常付款-已付货未对账预估' },
+  { ...leaf('after_sales', 'normal_group', 1), label: '正常付款-配件发货预估' },
+  { ...leaf('shipment', 'normal_group', 1), label: '正常付款-发货计划预估' },
   { id: 'total', label: '总合计', parentId: null, depth: 0, categories: Object.keys(CATEGORIES) },
 ];
 const emptyCell = () => ({ paidCents: 0, unpaidCents: 0, totalCents: 0, uncertainCount: 0 });

@@ -21,7 +21,7 @@ test('父子表仅汇总叶子，正常付款包含预估，期间排除时间�
     record('shipment', [plan('2026-11', 70)]), record('after_sales', [plan('2026-11', 20)]),
     record('unregistered', [plan('2026-11', 10)]),
   ], [], slots);
-  assert.equal(data.paymentTable.rows.length, 10);
+  assert.equal(data.paymentTable.rows.length, 9);
   assert.deepEqual(data.paymentTable.months, ['2026-11', '2026-12']);
   assert.deepEqual(data.pendingPaymentTable.months, ['pending']);
   assert.equal(rowOf(data, 'forecast_group'), undefined);
@@ -143,19 +143,39 @@ test('部分申请或未付未知按月保留待核对，已付清和真实零�
 });
 
 
-test('正常付款包含其余六个子类，月度和待定结构一致且总金额只加一次', () => {
+test('正常付款展开五行来源汇总，资金台账合并两类，月度和待定各金额只加一次', () => {
   const categories = ['negotiated', 'negotiated_normal', 'normal', 'normal_unreconciled', 'shipment', 'after_sales', 'unregistered'];
   const data = buildDashboard(categories.map((category, i) => record(category, [plan('2027-01', (i + 1) * 100, 0), plan(null, i + 1)])), [], slots);
   for (const table of [data.paymentTable, data.pendingPaymentTable]) {
     assert.deepEqual(table.rows.filter(row => row.parentId === 'normal_group').map(row => row.label),
-      ['正常付款-谈判付款表', '正常付款-正常对账表', '正常付款-未完成对账', '发货计划预估', '售后配件预估', '已发货未登记台账预估']);
+      ['正常付款-谈判付款表', '正常付款-资金台账表', '正常付款-已付货未对账预估', '正常付款-配件发货预估', '正常付款-发货计划预估']);
     assert.deepEqual(table.rows.filter(row => !row.parentId).map(row => row.label), ['谈判付款', '正常付款', '总合计']);
     const month = table === data.paymentTable ? '2027-01' : 'pending';
     const factor = table === data.paymentTable ? 100 : 1;
-    for (const [id, expected] of [['normal_group', 27], ['total', 28]]) {
+    assert.deepEqual(table.rows.find(row => row.id === 'normal_ledger').categories, ['normal', 'normal_unreconciled']);
+    for (const [id, expected] of [['normal_group', 27], ['total', 28], ['normal_ledger', 7]]) {
       assert.equal(table.rows.find(row => row.id === id).cells[month].totalCents, expected * factor);
     }
+    for (const key of ['totalCents', 'paidCents', 'unpaidCents', 'unappliedUnpaidCents']) {
+      const children = table.rows.filter(row => row.parentId === 'normal_group');
+      assert.equal(children.reduce((sum, row) => sum + row.cells[month][key], 0), table.rows.find(row => row.id === 'normal_group').cells[month][key]);
+    }
   }
+});
+
+test('资金台账汇总保留零值和未知金额，来源类别筛选不混入另一类', () => {
+  const records = [record('normal', [plan('2026-11', 0), plan('2026-12', 50, 20)]),
+    record('normal_unreconciled', [plan('2026-11', 100, null), plan('2027-01', 200)])];
+  const data = buildDashboard(records, [], slots);
+  const ledger = rowOf(data, 'normal_ledger');
+  assert.equal(ledger.cells['2026-11'].totalCents, 100);
+  assert.equal(ledger.cells['2026-11'].paidCents, null);
+  assert.equal(ledger.period.totalCents, 350);
+  assert.equal(ledger.period.unpaidCents, null);
+  const filtered = buildDashboard(records, [], slots, { category: 'normal', from: '2026-11', to: '2026-11' });
+  assert.equal(rowOf(filtered, 'normal_ledger').period.totalCents, 0);
+  assert.equal(rowOf(filtered, 'normal_ledger').period.unpaidCents, 0);
+  assert.equal(filtered.records.length, 1);
 });
 
 test('导出的月度及待定汇总保留未提交申请单金额、真实零与待核对，金额以元输出', async () => {

@@ -81,6 +81,10 @@ test('子页面下载包含全部分页记录，月度与待定分离，供应�
   const evidence = await workbook(await f.request(exportPath({ exportView: 'drilldown', ...drill, recordKey: firstRecord.key }), { session: admin }));
   assert.ok(contains(evidence, '分页供应商24'));
   assert.equal(contains(evidence, '分页供应商23'), false);
+  const searched = await workbook(await f.request(exportPath({ exportView: 'drilldown', ...drill, rowId: 'normal_ledger', supplierSearch: '供应商2' }), { session: admin }));
+  for (const i of [2, 20, 21, 22, 23, 24]) assert.ok(contains(searched, `分页供应商${i}`));
+  assert.equal(contains(searched, '分页供应商1'), false);
+  assert.equal(searched.getWorksheet('付款金额明细').rowCount, 8);
   const whole = await workbook(await f.request(exportPath({}), { session: admin }));
   assert.ok(whole.getWorksheet('月度付款汇总'));
   assert.ok(whole.getWorksheet('时间待定付款汇总'));

@@ -1,6 +1,8 @@
 export function detailRecords(records, selection) {
   if (!selection) return [];
-  return records.filter(record => selection.categories.includes(record.category)).flatMap(record => {
+  const supplierSearch = (selection.supplierSearch || '').normalize('NFKC').trim().toLowerCase();
+  return records.filter(record => selection.categories.includes(record.category) &&
+    (record.supplier || '').normalize('NFKC').toLowerCase().includes(supplierSearch)).flatMap(record => {
     const plans = (record.selectedPlans || record.plans || []).filter(plan =>
       (selection.month === 'period' ? Boolean(plan.month) : (plan.month || 'pending') === selection.month) &&
       (selection.measure !== 'unappliedUnpaidCents' || plan.applicationState !== 'applied') &&
