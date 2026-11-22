@@ -7,12 +7,13 @@ export const SLOTS = [
   { id: 'unregistered', label: '已发货未登记台账预估' },
 ];
 export const ORDER_SLOT = { id: 'kingdee_orders', label: '金蝶采购订单' };
+export const OA_SLOT = { id: 'corporate_oa', label: '对公付款OA流程' };
 export const DELIVERY_SLOTS = [
   { id: 'delivery_orders', label: '金蝶采购订单' },
   { id: 'delivery_inbound', label: '采购入库单' },
   { id: 'delivery_receipts', label: '收料通知单' },
 ];
-export const ALL_SLOTS = [...SLOTS, ORDER_SLOT, ...DELIVERY_SLOTS];
+export const ALL_SLOTS = [...SLOTS, OA_SLOT, ORDER_SLOT, ...DELIVERY_SLOTS];
 export const CATEGORIES = {
   negotiated: '谈判付款-谈判付款表', negotiated_normal: '正常付款-谈判付款表', normal: '正常付款-正常对账表', normal_unreconciled: '正常付款-未完成对账', shipment: '发货计划预估',
   after_sales: '售后配件预估', unregistered: '已发货未登记台账预估',

@@ -1,7 +1,8 @@
 import ExcelJS from 'exceljs';
 import { isLegacyWorkbook, loadDeliveryWorkbook } from './delivery-workbook.js';
 import yauzl from 'yauzl';
-import { ALL_SLOTS, MAX_UPLOAD_BYTES, ORDER_SLOT, PARSER_VERSION } from '../shared/constants.js';
+import { ALL_SLOTS, MAX_UPLOAD_BYTES, ORDER_SLOT, OA_SLOT, PARSER_VERSION } from '../shared/constants.js';
+import { oaSheetMetadata, parseOaWorkbook } from './oa-parser.js';
 import { findDuplicateIssues } from './dashboard.js';
 import { classifyPlanPayments, commentPaymentState } from './payment-status.js';
 import { resolveProgressPayments } from './payment-progress.js';
@@ -82,7 +83,7 @@ async function loadWorkbook(buffer, slotId) {
     return loadDeliveryWorkbook(buffer);
   }
   await checkArchive(buffer);
-  if (isDeliverySlot(slotId)) return loadDeliveryWorkbook(await normalizeWorksheetParts(buffer));
+  if (isDeliverySlot(slotId) || slotId === OA_SLOT.id) return loadDeliveryWorkbook(await normalizeWorksheetParts(buffer));
   const workbook = new ExcelJS.Workbook();
   try { await workbook.xlsx.load(await normalizeWorksheetParts(buffer)); }
   catch (error) { throw error.status === 422 ? error : invalid('无法读取 Excel，请用 Excel 或 WPS 重新保存为 .xlsx 后上传。'); }
@@ -220,6 +221,7 @@ function sheetMetadata(workbook, slotId) {
 
 export async function inspectWorkbook(buffer, slotId) {
   const workbook = await loadWorkbook(buffer, slotId);
+  if (slotId === OA_SLOT.id) return { kind: 'corporate_oa', sheets: oaSheetMetadata(workbook, textOf) };
   if (isDeliverySlot(slotId)) return { kind: 'delivery', sheets: deliverySheetMetadata(workbook, slotId) };
   return { ...(slotId === ORDER_SLOT.id ? { kind: 'archive' } : {}), sheets: sheetMetadata(workbook, slotId) };
 }
@@ -265,6 +267,7 @@ function readPaymentProgress(workbook, allowLegacyProgress, issues) {
 
 export async function parseWorkbook(buffer, { slotId, selectedSheets, allowLegacyProgress = false } = {}) {
   const workbook = await loadWorkbook(buffer, slotId);
+  if (slotId === OA_SLOT.id) return parseOaWorkbook(workbook, selectedSheets, { textOf, valueOf, parseMoney });
   if (isDeliverySlot(slotId)) return parseDeliveryWorkbook(workbook, { slotId, selectedSheets }, parseDate);
   const sheets = sheetMetadata(workbook, slotId);
   if (selectedSheets !== undefined && (!Array.isArray(selectedSheets) || selectedSheets.some(name => typeof name !== 'string'))) throw invalid('工作表选择格式不正确。');

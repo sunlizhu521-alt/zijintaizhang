@@ -1,0 +1,35 @@
+.payment-analysis { width: 100%; min-width: 0; }
+.analysis-filters { display: flex; align-items: end; gap: 18px; flex-wrap: wrap; }
+.analysis-filters label { display: grid; gap: 7px; min-width: 150px; }
+.analysis-filters input { min-width: 240px; }
+.analysis-filters strong { align-self: center; }
+.analysis-cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; }
+.analysis-cards section { padding: 24px; border-radius: 20px; background: #e8f6f2; }
+.analysis-cards section:nth-child(2) { background: #eaf1ff; }
+.analysis-cards section:nth-child(3) { background: #f1ebff; }
+.analysis-cards strong { display: block; font-size: clamp(24px, 2.4vw, 38px); margin: 10px 0 2px; }
+.analysis-cards small { font-weight: 400; font-size: 13px; color: #657286; margin-left: 6px; }
+.analysis-table > table { min-width: 1100px; width: 100%; }
+.analysis-table td, .analysis-table th { text-align: center; padding: 10px; border: 1px solid #e7edf3; }
+.analysis-table td small { display: block; color: #8a672c; font-size: 12px; }
+.analysis-table > table > thead > tr > th:nth-child(2), .analysis-table > table > tbody > tr > td:nth-child(2) { position: sticky; left: 0; background: #fff; z-index: 1; min-width: 190px; }
+.analysis-table > table > thead > tr > th { background: #f4f6fa; }
+.analysis-evidence { width: 100%; table-layout: fixed; }
+.analysis-evidence th { width: 180px; background: #f3f7fa; }
+.analysis-evidence td { white-space: pre-wrap; text-align: left; overflow-wrap: anywhere; }
+.analysis-chart { overflow-x: auto; }
+.analysis-chart svg { width: 100%; min-width: 760px; display: block; }
+.analysis-dot { display: inline-block; width: 10px; height: 10px; margin: 0 6px 0 16px; border-radius: 2px; }
+.analysis-dot.current { background: #24b5bc; }
+.analysis-dot.previous { background: #7a9fe5; }
+.analysis-top { width: 100%; }
+.analysis-top td, .analysis-top th { text-align: center; padding: 8px 12px; }
+@media (max-width: 700px) {
+  .analysis-cards { grid-template-columns: 1fr; gap: 10px; }
+  .analysis-cards section { padding: 16px; }
+  .analysis-filters label { flex: 1 1 100%; min-width: 0; }
+  .analysis-filters input { min-width: 0; width: 100%; }
+  .payment-analysis .page-heading { flex-wrap: wrap; }
+}
+
+@media (max-width: 900px) { .funds-shell .sidebar nav { flex-wrap: wrap; } }

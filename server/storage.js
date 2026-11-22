@@ -131,9 +131,9 @@ export function versionDetails(db, slotId, id) {
   const cached = db.prepare('SELECT parsed_json,record_count,issue_count FROM file_parse_cache WHERE version_id=? AND parser_version=?')
     .get(id, PARSER_VERSION);
   const parsed = JSON.parse(cached?.parsed_json ?? row.parsed_json);
-  if (parsed.kind === 'delivery') return {
+  if (['delivery', 'corporate_oa'].includes(parsed.kind)) return {
     version: versionInfo({ ...row, ...cached, current: requireSlot(db, slotId).current_version_id === id }),
-    kind: 'delivery', selectedSheets: parsed.selectedSheets,
+    kind: parsed.kind, selectedSheets: parsed.selectedSheets,
     records: parsed.records.map(r => ({ ...r, filename: row.filename, versionId: row.id, slotId })),
     issues: parsed.issues.map(i => ({ ...i, versionId: row.id, slotId })),
   };
@@ -171,4 +171,14 @@ export function activeData(db) {
   const context = currentProgress(db);
   const resolved = resolveProgressPayments(records, context.progress, context.source);
   return { records: resolved.records, issues: [...issues, ...resolved.issues], slots: listSlots(db) };
+}
+
+export function activeSlotData(db, slotId) {
+  const row = db.prepare(`SELECT v.*, COALESCE(c.parsed_json,v.parsed_json) AS effective_parsed_json FROM file_slots s
+    JOIN file_versions v ON v.id=s.current_version_id
+    LEFT JOIN file_parse_cache c ON c.version_id=v.id AND c.parser_version=? WHERE s.id=?`).get(PARSER_VERSION, slotId);
+  if (!row) return { records: [], issues: [], version: null };
+  const parsed = JSON.parse(row.effective_parsed_json);
+  return { ...parsed, records: parsed.records.map(r => ({ ...r, filename: row.filename, versionId: row.id })),
+    version: { id: row.id, filename: row.filename, uploadedAt: row.uploaded_at } };
 }

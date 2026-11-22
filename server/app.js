@@ -7,7 +7,9 @@ import multer from 'multer';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { existsSync, readFileSync } from 'node:fs';
-import { API_PATH, BASE_PATH, MAX_UPLOAD_BYTES, ORDER_SLOT, DELIVERY_SLOTS } from '../shared/constants.js';
+import { API_PATH, BASE_PATH, MAX_UPLOAD_BYTES, ORDER_SLOT, OA_SLOT, DELIVERY_SLOTS } from '../shared/constants.js';
+import { buildPaymentAnalysis, oaFlowList } from './payment-analysis.js';
+import { paymentAnalysisExport, oaFlowsExport } from './payment-analysis-export.js';
 import { createAuth } from './auth.js';
 import { initializePlanner, createPlannerRouter } from './planner.js';
 import { initializeDelivery, createDeliveryRouter } from './delivery.js';
@@ -17,7 +19,7 @@ import { runParser } from './parse-job.js';
 import { dashboardExport, logsExport } from './exports.js';
 import { dashboardExportScope, scopedDashboardExport } from './dashboard-export.js';
 import { initializeStorage, fail, requireSlot, listSlots, createDraft, getDraft, activateDraft,
-  listVersions, getVersion, versionDetails, restoreVersion, activeData } from './storage.js';
+  listVersions, getVersion, versionDetails, restoreVersion, activeData, activeSlotData } from './storage.js';
 
 const distDefault = fileURLToPath(new URL('../dist/', import.meta.url));
 function requestEvent(req) {
@@ -132,6 +134,21 @@ export function createApp({ db, ratingDb, secureCookies = false, publicOrigin = 
     excelResponse(res, result.title, result.buffer);
   });
   api.get('/files', permission('files'), (req, res) => res.json({ slots: listSlots(db) }));
+  const analysis = query => buildPaymentAnalysis(activeSlotData(db, OA_SLOT.id), activeSlotData(db, 'schedule'), query);
+  api.get('/payment-analysis', permission('dashboard'), (req, res) => res.json(analysis(req.query)));
+  api.get('/payment-analysis/export', permission('dashboard'), permission('export'), async (req, res) => {
+    const data = analysis(req.query);
+    const buffer = await paymentAnalysisExport(data);
+    audit(db, { ...requestEvent(req), kind: 'operation', action: '导出资金付款分析', outcome: 'success', details: { ...data.filters, versions: data.versions, recordCount: data.records.length } });
+    excelResponse(res, '资金付款分析', buffer);
+  });
+  api.get('/oa-flows', permission('files'), (req, res) => res.json({ ...oaFlowList(activeSlotData(db, OA_SLOT.id), req.query), slots: listSlots(db, [OA_SLOT]) }));
+  api.get('/oa-flows/export', permission('files'), permission('export'), async (req, res) => {
+    const data = oaFlowList(activeSlotData(db, OA_SLOT.id), req.query);
+    const buffer = await oaFlowsExport(data);
+    audit(db, { ...requestEvent(req), kind: 'operation', action: '导出对公付款OA流程', outcome: 'success', details: { ...data.filters, version: data.version, recordCount: data.records.length } });
+    excelResponse(res, '对公付款OA流程', buffer);
+  });
   api.get('/orders', permission('files'), (req, res) => res.json({ slots: listSlots(db, [ORDER_SLOT]) }));
   const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: MAX_UPLOAD_BYTES, files: 1, fields: 0, parts: 1 },
     fileFilter(req, file, cb) {

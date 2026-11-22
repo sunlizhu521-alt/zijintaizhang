@@ -7,6 +7,7 @@ import Dashboard from './Dashboard.jsx';
 import Files from './Files.jsx';
 import System from './System.jsx';
 import Delivery from './Delivery.jsx';
+import PaymentAnalysis from './PaymentAnalysis.jsx';
 
 const ordersPage = window.location.pathname.replace(/\/$/, '') === '/caigoudingdangenjin';
 const deliveryPage = window.location.pathname.replace(/\/$/, '') === '/gongyingshangjiaofu';
@@ -44,7 +45,7 @@ export default function App() {
   if (user.mustChangePassword) return <div className={authClass}><section className="auth-card"><Brand /><h1>请设置自己的密码</h1><p className="subtitle">首次登录或管理员重置后，需要修改密码才能使用系统。</p><PasswordForm onSaved={loggedIn} /><button className="text-button auth-logout" onClick={logout} disabled={loggingOut}>退出登录</button><ErrorNotice error={error} /></section></div>;
   if (deliveryPage) return <div className="delivery-shell"><Delivery user={user} onPassword={() => setChangingPassword(true)} onLogout={logout} loggingOut={loggingOut} sessionError={error} />{changingPassword && <Modal title="修改密码" onClose={() => setChangingPassword(false)}><PasswordForm onSaved={result => { loggedIn(result); setChangingPassword(false); }} /></Modal>}</div>;
   const navigation = ordersPage ? (can(user, 'files') ? [{ id: 'orders', label: '采购订单跟进', mark: '▤' }] : []) : [
-    ...(can(user, 'dashboard') ? [{ id: 'dashboard', label: '资金简报', mark: '▥' }] : []),
+    ...(can(user, 'dashboard') ? [{ id: 'dashboard', label: '资金简报', mark: '▥' }, { id: 'payment-analysis', label: '资金付款分析', mark: '▥' }] : []),
     ...(can(user, 'files') ? [{ id: 'files', label: '文件管理', mark: '▤' }] : []),
     ...(user.isAdmin || ['logsLogin', 'logsOperation', 'logsSecurity'].some(permission => can(user, permission)) ? [{ id: 'system', label: '系统管理', mark: '⚙' }] : []),
   ];
@@ -52,7 +53,7 @@ export default function App() {
   return <div className={ordersPage ? 'app-shell' : 'app-shell funds-shell'}>
     <a href="#main-content" className="skip-link">跳至主要内容</a>
     <aside className="sidebar"><Brand /><p className="sidebar-description">{ordersPage ? '订单文件与版本管理' : '采购付款与资金计划'}</p><nav aria-label="主导航">{navigation.map(item => <button key={item.id} className={active === item.id ? 'active' : ''} aria-current={active === item.id ? 'page' : undefined} onClick={() => { setPage(item.id); setError(null); }}><span aria-hidden="true">{item.mark}</span>{item.label}</button>)}</nav><div className="sidebar-bottom"><div className="account"><span className="avatar" aria-hidden="true">{(user.displayName || user.username).slice(0, 1)}</span><div><strong>{user.displayName || user.username}</strong><small>{user.isAdmin ? '管理员' : '授权用户'}</small></div></div><div className="account-actions"><button onClick={() => setChangingPassword(true)}>修改密码</button><button onClick={logout} disabled={loggingOut}>{loggingOut ? '退出中…' : '退出登录'}</button></div><span className="sidebar-footnote">{appTitle} · 业务数据来自上传文件</span></div></aside>
-    <main id="main-content" tabIndex={-1}><ErrorNotice error={error} />{active === 'orders' ? <Files user={user} orders /> : active === 'dashboard' ? <Dashboard user={user} /> : active === 'files' ? <Files user={user} /> : active === 'system' ? <System user={user} onUserChanged={refreshSession} /> : <Empty title="账号尚未获得页面权限">请联系管理员分配所需页面与操作权限。</Empty>}</main>
+    <main id="main-content" tabIndex={-1}><ErrorNotice error={error} />{active === 'orders' ? <Files user={user} orders /> : active === 'dashboard' ? <Dashboard user={user} /> : active === 'payment-analysis' ? <PaymentAnalysis user={user} /> : active === 'files' ? <Files user={user} /> : active === 'system' ? <System user={user} onUserChanged={refreshSession} /> : <Empty title="账号尚未获得页面权限">请联系管理员分配所需页面与操作权限。</Empty>}</main>
     {changingPassword && <Modal title="修改密码" onClose={() => setChangingPassword(false)}><PasswordForm onSaved={result => { loggedIn(result); setChangingPassword(false); }} /></Modal>}
   </div>;
 }
