@@ -23,7 +23,8 @@ export function commentApplication(comment) {
   const applicationLines = text.split(/[\n\r;；。]/).filter(line => /申请(?:单|日期|时间)|部分(?:提交|申请)|(?:提交|申请)(?:了)?部分/.test(line))
     .filter(line => !/OA/i.test(line) || /申请(?:单|日期|时间)/.test(line));
   for (const line of applicationLines) {
-    const pattern = /(?:^|[,，])\s*申请(?:日期|时间)\s*(?:\(付款节奏跟进\))?\s*:\s*(?:(?:(\d{4})年)?(\d{1,2})月(\d{1,2})日|(\d{4})[-/](\d{1,2})[-/](\d{1,2}))(?=$|[\s,，!！\\])/g;
+    // 批次归属备注不否定有效申请日期，申请金额仍归批注所在的金额格。
+    const pattern = /(?:^|[,，])\s*申请(?:日期|时间)\s*(?:\(付款节奏跟进\))?\s*:\s*(?:(?:(\d{4})年)?(\d{1,2})月(\d{1,2})日|(\d{4})[-/](\d{1,2})[-/](\d{1,2}))(?=$|[\s,，!！\\]|\(批次归属待核对\))/g;
     for (const match of line.matchAll(pattern)) {
       const year = match[1] || match[4] ? Number(match[1] || match[4]) : null;
       const month = Number(match[2] || match[5]), day = Number(match[3] || match[6]);

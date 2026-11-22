@@ -31,6 +31,33 @@ test('申请日期与明确申请单提交独立于付款时间和 OA，日期�
   }
 });
 
+test('有效申请日期后的批次归属待核对说明仍计已申请，保留原文与逐批月份', () => {
+  const note = '申请日期（付款节奏跟进）：2026年11月19日（批次归属待核对）';
+  for (const text of [note, '申请日期:2026-11-19(批次归属待核对)', '申请时间：2026/11/19（批次归属待核对）']) {
+    assert.equal(commentApplication(text).state, 'applied', text);
+    assert.deepEqual(commentApplication(text).dates, ['2026-11-19']);
+  }
+  for (const text of ['申请日期：2026年2月29日（批次归属待核对）', '申请日期：（批次归属待核对）',
+    '预计申请日期：2026年11月19日（批次归属待核对）', 'OA备注时间：2026年11月19日（批次归属待核对）']) {
+    assert.equal(commentApplication(text).state, 'unapplied', text);
+  }
+  for (const text of [`${note}\n付款申请单：未提交`, `${note}\n付款申请单已撤销`, `${note}\n付款申请单：部分提交`]) {
+    assert.equal(commentApplication(text).state, 'review', text);
+  }
+  for (const category of ['negotiated', 'negotiated_normal']) {
+    const row = record([plan('2026-11', 9000000), plan('2026-12', 8309000)],
+      [item('V9', 9000000, `${note}\n付款时间（付款节奏跟进）：未记录`), item('Y9', 8309000, '', '2026-12')], category);
+    const original = JSON.stringify(row);
+    assert.deepEqual(amounts(row), [[9000000, 0], [0, 8309000]]);
+    assert.deepEqual(result(row).map(p => p.month), ['2026-11', '2026-12']);
+    assert.match(result(row)[0].applicationEvidence[0].comment, /（批次归属待核对）/);
+    assert.equal(JSON.stringify(row), original);
+    for (const amount of [0, -10000]) {
+      assert.deepEqual(amounts(record([plan('2026-11', amount, note)], [], category)), [[amount, 0]]);
+    }
+  }
+});
+
 test('两类谈判均只看金额格批注，同额不同月和申请日期跨月互不覆盖', () => {
   for (const category of ['negotiated', 'negotiated_normal']) {
     const row = record([plan('2026-10', 9000000), plan('2026-11', 9000000), plan('2026-12', 8309000)],

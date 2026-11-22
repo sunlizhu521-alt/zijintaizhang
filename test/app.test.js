@@ -79,7 +79,7 @@ test('申请批注按金额格逐批统计，跨月汇总、导出、重启和�
   const sheet = source.getWorksheet('谈判付款');
   for (const [column, date, amount, comment] of [
     ['P', '2026年11月2日', 150, '申请日期（付款节奏跟进）：2026年11月2日\n付款时间（付款节奏跟进）：2026年11月5日'],
-    ['Q', '2026年11月16日', 200, '申请日期（付款节奏跟进）：2026年11月10日'],
+    ['Q', '2026年11月16日', 200, '申请日期（付款节奏跟进）：2026年11月10日（批次归属待核对）'],
     ['R', '2026年11月30日', 250, ''],
     ['S', '2026年12月14日', 400, ''],
   ]) {
@@ -108,6 +108,7 @@ test('申请批注按金额格逐批统计，跨月汇总、导出、重启和�
   await exported.xlsx.load((await f.request(`/dashboard/export${query}`, { session: admin })).bytes);
   assert.equal(valueByHeader(exported.getWorksheet('付款明细'), 2, '已申请未付金额（元）'), 200);
   assert.equal(valueByHeader(exported.getWorksheet('付款明细'), 2, '未申请金额（元）'), 650);
+  assert.match(valueByHeader(exported.getWorksheet('筛选明细'), 2, '申请依据位置及原文'), /（批次归属待核对）/);
   const monthly = exported.getWorksheet('月度付款汇总');
   assert.equal(valueByHeader(monthly, rowByLabel(monthly, '总合计'), '2026-11未提交申请单金额（元）'), 250);
   assert.equal(valueByHeader(monthly, rowByLabel(monthly, '总合计'), '2026-12未提交申请单金额（元）'), 700);
