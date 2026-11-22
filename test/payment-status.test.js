@@ -11,6 +11,29 @@ function classify(category, plans, extra = {}) {
 const plan = (month = '2026-11', amountCents = 10000, sourceComment = '') => ({ month, amountCents, sourceCell: 'AK2', sourceComment });
 const item = (amountCents, comment, month = '2026-11', sourceCell = 'U2') => ({ month, amountCents, sourceCell, comment, state: commentPaymentState(comment) });
 
+test('付款时间未记录是占位文字，不让已申请未付和同月已付金额变成未知', () => {
+  const placeholder = '申请日期（付款节奏跟进）：2026年11月19日\n付款时间（付款节奏跟进）：未记录';
+  for (const text of [placeholder, '付款时间:未记录', '申请日期：2026年11月19日，付款时间（付款节奏跟进）：未记录。']) {
+    assert.equal(commentPaymentState(text), 'none');
+    assert.deepEqual(commentPaymentDates(text), []);
+  }
+  for (const category of ['negotiated', 'negotiated_normal']) {
+    for (const amount of [0, 10000, -10000]) {
+      const result = classify(category, [plan('2026-11', amount)], { installments: [item(amount, placeholder)] });
+      assert.deepEqual([result.plans[0].paidCents, result.plans[0].unpaidCents], [0, amount]);
+      assert.equal(result.issues.length, 0);
+    }
+    const mixed = classify(category, [plan()], { installments: [item(4000, '付款时间：2026年11月2日'), item(6000, placeholder)] });
+    assert.deepEqual([mixed.plans[0].paidCents, mixed.plans[0].unpaidCents], [4000, 6000]);
+    assert.equal(mixed.issues.length, 0);
+    assert.equal(classify(category, [plan('2026-11', 10000, placeholder)]).plans[0].paidCents, 0);
+  }
+  assert.equal(commentPaymentState(`${placeholder}\n11月2日-已付`), 'paid');
+  for (const text of [`${placeholder}\n已付`, `${placeholder}\n部分付款`, `${placeholder}\n11月2日-已付\n未付款`, '付款时间：未记录但已付']) {
+    assert.equal(commentPaymentState(text), 'uncertain', text);
+  }
+});
+
 test('批注仅识别日期加明确已付，支持核实和已支付，负向和不完整表述不误判', () => {
   for (const note of ['11月5日-已付', '11月5日核实-已支付\n申请日期：2026年11月2日', '2027年1月3日－已付款', '11月5日-已付\n11月5日-已付']) assert.equal(commentPaymentState(note), 'paid', note);
   for (const note of ['申请日期：2026年11月2日', '11月5日-OA已评论', '']) assert.equal(commentPaymentState(note), 'none');

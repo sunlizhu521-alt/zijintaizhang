@@ -1,6 +1,7 @@
 import { CATEGORIES, LEDGER_CATEGORIES } from '../shared/constants.js';
 import { buildPaymentTable, paymentPlanTotals, paymentTableTotals } from './payment-table.js';
 import { describeReviewIssue } from './review-issues.js';
+import { isInformationIssue } from '../shared/issue-level.js';
 import { classifyPlanApplications, sumApplicationAmounts } from './payment-application.js';
 
 const MONTH = /^\d{4}-(0[1-9]|1[0-2])$/;
@@ -189,7 +190,7 @@ export function buildDashboard(records, issues = [], slots = [], filters = {}) {
   const groups = supplierGroups(selectedRecords);
   const issuesByRecord = new Map();
   for (const issue of uniqueIssues) {
-    if (!issue.recordKey) continue;
+    if (!issue.recordKey || isInformationIssue(issue)) continue;
     if (!issuesByRecord.has(issue.recordKey)) issuesByRecord.set(issue.recordKey, []);
     issuesByRecord.get(issue.recordKey).push(issue);
   }
@@ -226,6 +227,8 @@ export function buildDashboard(records, issues = [], slots = [], filters = {}) {
     appliedUnpaidRecords: selectedRecords.filter(record => record.selectedAppliedUnpaidCents !== 0 && record.selectedAppliedUnpaidCents !== null),
     reviewSuppliers: [...reviews.values()],
     issues: uniqueIssues,
+    reviewIssues: uniqueIssues.filter(issue => !isInformationIssue(issue)),
+    notices: uniqueIssues.filter(isInformationIssue),
     options: { suppliers: option('supplier'), payers: option('payer'), owners: option('owner'),
       months: [...new Set(records.flatMap(record => record.plans.map(plan => plan.month)).filter(Boolean))].sort() },
     slots, updatedAt,

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import ExcelJS from 'exceljs';
 import { appFixture, syntheticSchedule, syntheticForecast } from './helpers.js';
 
-const views = ['monthly', 'pending', 'suppliers', 'pending-suppliers', 'payments', 'review', 'issues', 'drilldown'];
+const views = ['monthly', 'pending', 'suppliers', 'pending-suppliers', 'payments', 'review', 'issues', 'notices', 'drilldown'];
 const drill = { table: 'monthly', rowId: 'total', detailMonth: '2026-11', measure: 'totalCents' };
 const exportPath = options => `/dashboard/export?${new URLSearchParams({ from: '2026-11', to: '2026-12', ...options })}`;
 async function workbook(result) {
@@ -32,6 +32,7 @@ test('子页面下载仅允许同时拥有看板和导出权限的账号，并�
     assert.equal((await f.request(path, { session: exporter })).status, 403, exportView);
   }
   await workbook(await f.request(exportPath({ exportView: 'payments' }), { session: permitted }));
+  await workbook(await f.request(exportPath({ exportView: 'notices' }), { session: permitted }));
   for (const options of [
     { exportView: 'unrecognized' },
     { exportView: 'drilldown', ...drill, table: 'all' },

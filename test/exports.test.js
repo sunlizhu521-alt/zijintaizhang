@@ -79,15 +79,15 @@ test('待核对导出保留原列及问题，并补具体事项、操作提示�
   const data = buildDashboard(records, [{ code: 'ZERO_DEFAULTED', recordKey: records[0].key, message }], slots, { month: '2026-11' });
   const book = new ExcelJS.Workbook();
   await book.xlsx.load(await dashboardExport(data));
-  const sheet = book.getWorksheet('待核对');
+  const sheet = book.getWorksheet('普通提示');
   assert.deepEqual(sheet.getRow(1).values.slice(1), ['问题', '来源工作表', '原始行', '类型', '核对事项', '需要核对', '来源文件', '关联位置']);
   assert.equal(value(sheet, message, '来源工作表'), '正常付款');
   assert.equal(value(sheet, message, '原始行'), 2);
   assert.equal(value(sheet, message, '核对事项'), '空金额按0处理');
-  assert.match(value(sheet, message, '需要核对'), /确认列出的单元格是否确实为0/);
+  assert.match(value(sheet, message, '需要核对'), /已按约定计为0/);
   assert.equal(value(sheet, message, '来源文件'), '来源0.xlsx');
   const duplicateMessage = data.issues.find(issue => issue.code === 'DUPLICATE_FLOW').message;
-  assert.equal(value(sheet, duplicateMessage, '关联位置'), '来源1.xlsx · 正常付款 第3行 · 供应商1');
+  assert.equal(value(book.getWorksheet('待核对'), duplicateMessage, '关联位置'), '来源1.xlsx · 正常付款 第3行 · 供应商1');
 });
 
 test('不支付仅排除该笔待核对及旧重复关联，月度和待定导出仍保留全部业务记录与金额', async () => {
@@ -111,7 +111,7 @@ test('不支付仅排除该笔待核对及旧重复关联，月度和待定导�
     const book = new ExcelJS.Workbook();
     await book.xlsx.load(await dashboardExport(data));
     const review = book.getWorksheet('待核对');
-    const exportedMessages = columnValues(review, '问题');
+    const exportedMessages = columnValues(book.getWorksheet('普通提示'), '问题');
     assert.ok(!exportedMessages.includes(messages[0]));
     assert.ok(exportedMessages.includes(messages[1]));
     assert.ok(exportedMessages.includes(messages[2]));

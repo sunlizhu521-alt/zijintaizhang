@@ -7,7 +7,7 @@ test('核对文案解释现有提示，空金额按0不称坏数据，疑似重�
   const zero = describeReviewIssue({ code: 'ZERO_DEFAULTED', message }, new Map());
   assert.equal(zero.title, '空金额按0处理');
   assert.equal(zero.message, message);
-  assert.equal(zero.action, '确认列出的单元格是否确实为0；若应有金额，请补填或重新计算并保存Excel后上传。');
+  assert.equal(zero.action, '已按约定计为0；如需补充金额，在 Excel 修改后重新上传。');
   const duplicate = describeReviewIssue({ code: 'POSSIBLE_DUPLICATE', message: '可能重叠，请人工核对。' }, new Map());
   assert.match(duplicate.title, /疑似/);
   assert.match(duplicate.action, /确认是否为同一笔/);

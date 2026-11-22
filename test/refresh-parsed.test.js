@@ -1,3 +1,4 @@
+import { reviewIssueCount } from '../shared/issue-level.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import ExcelJS from 'exceljs';
@@ -47,6 +48,37 @@ function seedVersion(db, id, slotId, content, selectedSheets, current = true, pa
   if (current) db.prepare('UPDATE file_slots SET current_version_id=?, revision=revision+1, updated_at=?, updated_by=? WHERE id=?')
     .run(id, '2026-11-01T00:00:00.000Z', '合成上传人', slotId);
 }
+
+test('第9版未记录付款批注重算当前及历史缓存，申请未付恢复为确定金额且原文件不变', async t => {
+  const db = database(t);
+  const book = new ExcelJS.Workbook();
+  await book.xlsx.load(await scheduleBuffer({ progress: true }));
+  const sheet = book.getWorksheet('谈判付款');
+  sheet.getCell('J1').value = '2026年11月25日';
+  sheet.getCell('J2').value = 100;
+  sheet.getCell('J2').note = '申请日期（付款节奏跟进）：2026年11月19日\n付款时间（付款节奏跟进）：未记录';
+  const content = Buffer.from(await book.xlsx.writeBuffer());
+  for (const [id, current] of [['placeholder-history', false], ['placeholder-current', true]]) {
+    seedVersion(db, id, 'schedule', content, ['谈判付款', '正常付款', '付款进度整理'], current, 9);
+  }
+  const originals = db.prepare('SELECT * FROM file_versions ORDER BY id').all();
+  assert.equal(await refreshParsedVersions(db), 2);
+  assert.deepEqual(db.prepare('SELECT * FROM file_versions ORDER BY id').all(), originals);
+  const check = records => {
+    const data = buildDashboard(records.filter(record => record.category === 'negotiated'));
+    assert.equal(data.summary.paidCents, 0);
+    assert.equal(data.summary.remainingCents, 10000);
+    assert.equal(data.summary.appliedUnpaidCents, 10000);
+    assert.equal(data.summary.uncertainCount, 0);
+    assert.ok(!data.reviewIssues.some(issue => issue.code === 'PAYMENT_STATUS_UNCERTAIN'));
+  };
+  check(activeData(db).records);
+  check(versionDetails(db, 'schedule', 'placeholder-history').records);
+  const revision = listSlots(db).find(slot => slot.id === 'schedule').revision;
+  restoreVersion(db, 'schedule', 'placeholder-history', revision, { actor: '合成验收用户' });
+  check(activeData(db).records);
+  assert.equal(await refreshParsedVersions(db), 0);
+});
 
 test('第8版当前和历史缓存补齐分期申请批注，恢复后沿用自身批注且原件不变', async t => {
   const db = database(t);
@@ -136,10 +168,10 @@ test('旧原版与派生缓存升级到当前规则，历史缺进度表仍可�
     assert.equal(updated.parser_version, PARSER_VERSION);
     assert.equal(parsed.parserVersion, PARSER_VERSION);
     assert.equal(updated.record_count, parsed.records.length);
-    assert.equal(updated.issue_count, parsed.issues.length);
+    assert.equal(updated.issue_count, reviewIssueCount(parsed.issues));
     const details = versionDetails(db, previous.slot_id, previous.id);
     assert.equal(details.version.recordCount, parsed.records.length);
-    assert.equal(details.version.issueCount, parsed.issues.length);
+    assert.equal(details.version.issueCount, reviewIssueCount(parsed.issues));
     assert.deepEqual(details.records.map(record => record.category), parsed.records.map(record => record.category));
     if (previous.slot_id === 'schedule') {
       assert.deepEqual(parsed.records.map(record => record.category), ['negotiated', 'negotiated_normal', 'normal']);

@@ -80,9 +80,21 @@ test('空供应商按精确空值收窄，待核对单供应商排除他人和�
   assert.equal(rows(suppliers.getWorksheet('供应商付款明细')).length, 1);
 });
 
+test('普通提示独立下载，待核对导出不混入补零和明确未付款信息', async () => {
+  const data = dataFor([]);
+  data.issues = [{ code: 'ZERO_DEFAULTED', title: '空金额按0处理', message: '按0保存', sourceRow: 2 },
+    { code: 'PAYMENT_PROGRESS_REVIEW', title: '未付款', message: '“付款进度整理”的“是否已付款”为“未付款”，计未付。', sourceRow: 3 },
+    { code: 'BALANCE_MISMATCH', title: '余额不一致', message: '金额需核对', sourceRow: 4 }];
+  const notices = await workbook(data, { exportView: 'notices' });
+  assert.deepEqual(rows(notices.getWorksheet('普通提示')).map(row => row['原始行']), [2, 3]);
+  const review = await workbook(data, { exportView: 'issues' });
+  assert.deepEqual(rows(review.getWorksheet('待核对事项')).map(row => row['原始行']), [4]);
+  assert.throws(() => dashboardExportScope({ exportView: 'notices', detailSupplier: '供应商' }), /下载范围无效/);
+});
+
 test('空数据仍可下载有效空表；无效范围不会扩大到全部数据', async () => {
   const data = dataFor([]);
-  for (const exportView of ['monthly', 'pending', 'suppliers', 'pending-suppliers', 'payments', 'review', 'issues']) {
+  for (const exportView of ['monthly', 'pending', 'suppliers', 'pending-suppliers', 'payments', 'review', 'issues', 'notices']) {
     const book = await workbook(data, { exportView });
     assert.ok(book.worksheets.length > 1);
     assert.ok(book.getWorksheet('下载说明'));

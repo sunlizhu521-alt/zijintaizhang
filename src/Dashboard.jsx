@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { queryString, useResource } from './api.js';
 import { can, dateTime, moneyInWan, monthText, upcomingMonths } from './format.js';
-import { ErrorNotice, IssuesTable, Loading } from './components.jsx';
+import { ErrorNotice, InformationNotes, IssuesTable, Loading } from './components.jsx';
 import PaymentTable from './PaymentTable.jsx';
 import SupplierTable from './SupplierTable.jsx';
 import { PaymentRecordsTable, ReviewTable, SupplierSearch, Trend } from './brief-sections.jsx';
@@ -59,7 +59,7 @@ export default function Dashboard({ user }) {
       {tab === 'suppliers' && <section className="panel"><div className="section-heading"><h2>供应商明细 <span className="count">{data.supplierGroups?.length || 0} 家</span></h2><div className="download-actions"><span className="unit-label">万元</span><DashboardDownload options={{ exportView: 'suppliers' }} /></div></div><SupplierTable groups={data.supplierGroups || []} /></section>}
       {tab === 'applied' && <section className="panel"><div className="section-heading"><h2>付款明细</h2><div className="download-actions"><span className="unit-label">万元</span><DashboardDownload options={{ exportView: 'payments' }} /></div></div><PaymentRecordsTable records={data.records} summary={summary} reviewCount={summary.applicationReviewCount} onReview={() => detail('review')} /></section>}
       {tab === 'pending' && <><PaymentTable table={data.pendingPaymentTable} records={data.pendingRecords || []} pending /><section className="panel"><div className="section-heading"><h2>时间待定明细</h2><div className="download-actions"><span className="unit-label">万元 · 跟随供应商筛选</span><DashboardDownload options={{ exportView: 'pending-suppliers' }} /></div></div><SupplierTable exportView="pending-suppliers" groups={data.pendingSupplierGroups || []} /></section></>}
-      {tab === 'review' && <><section className="panel"><div className="section-heading"><h2>待核对供应商</h2><div className="download-actions"><span className="unit-label">万元 · 原台账金额</span><DashboardDownload options={{ exportView: 'review' }} /></div></div><ReviewTable groups={data.reviewSuppliers || []} /></section><section className="panel"><div className="section-heading"><h2>待核对事项 <span className="count">{data.issues?.length || 0}</span></h2><DashboardDownload options={{ exportView: 'issues' }} /></div><IssuesTable issues={data.issues} /></section></>}
+      {tab === 'review' && <><section className="panel"><div className="section-heading"><h2>待核对供应商</h2><div className="download-actions"><span className="unit-label">万元 · 原台账金额</span><DashboardDownload options={{ exportView: 'review' }} /></div></div><ReviewTable groups={data.reviewSuppliers || []} /></section><section className="panel"><div className="section-heading"><h2>待核对事项 <span className="count">{data.reviewIssues?.length || 0}</span></h2><DashboardDownload options={{ exportView: 'issues' }} /></div><IssuesTable issues={data.reviewIssues} /></section>{!!data.notices?.length && <section className="panel"><div className="download-actions"><DashboardDownload label="下载普通提示" options={{ exportView: 'notices' }} /></div><InformationNotes issues={data.notices} /></section>}</>}
     </>)}
   </div></DashboardDownloadContext.Provider>;
 }

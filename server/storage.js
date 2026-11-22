@@ -1,3 +1,4 @@
+import { reviewIssueCount } from '../shared/issue-level.js';
 import { randomUUID } from 'node:crypto';
 import { ALL_SLOTS, PARSER_VERSION, SLOTS } from '../shared/constants.js';
 import { audit, transaction } from './db.js';
@@ -92,14 +93,14 @@ export function activateDraft(db, draft, parsed, revision, event) {
     const id = randomUUID(); const now = new Date().toISOString();
     db.prepare('INSERT INTO file_versions VALUES (?,?,?,?,?,?,?,?,?,?)').run(
       id, draft.slot_id, draft.filename, draft.content, JSON.stringify(parsed),
-      JSON.stringify(parsed.selectedSheets), event.actor, now, parsed.records.length, parsed.issues.length,
+      JSON.stringify(parsed.selectedSheets), event.actor, now, parsed.records.length, reviewIssueCount(parsed.issues),
     );
     db.prepare('UPDATE file_slots SET current_version_id=?, revision=revision+1, updated_at=?, updated_by=? WHERE id=?')
       .run(id, now, event.actor, draft.slot_id);
     db.prepare('DELETE FROM upload_drafts WHERE token=?').run(draft.token);
     audit(db, { ...event, kind: 'operation', action: '上传并替换文件', target: draft.slot_id, outcome: 'success',
       details: { previousVersionId: slot.current_version_id, versionId: id, filename: draft.filename,
-        recordCount: parsed.records.length, issueCount: parsed.issues.length, selectedSheets: parsed.selectedSheets } });
+        recordCount: parsed.records.length, issueCount: reviewIssueCount(parsed.issues), selectedSheets: parsed.selectedSheets } });
     return { slot: listSlots(db, ALL_SLOTS).find(s => s.id === draft.slot_id), version: { id } };
   });
 }

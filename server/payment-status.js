@@ -20,7 +20,9 @@ export function commentPaymentDates(comment) {
 }
 
 export function commentPaymentState(comment) {
-  const text = String(comment ?? '').normalize('NFKC');
+  // 模板中的“未记录”不是付款证据，其他已付标记或矛盾内容仍按原规则核对。
+  const text = String(comment ?? '').normalize('NFKC').replace(
+    /(^|[\n\r;；。，,])[ \t]*付款时间[ \t]*(?:\(付款节奏跟进\))?[ \t]*:[ \t]*未记录[ \t]*(?=$|[\n\r;；。，,])/g, '$1');
   const paid = /已支付|已付款|已付/.test(text) || /(?:^|[\n\r;；。，,])\s*付款时间\s*(?:\(付款节奏跟进\))?\s*:/.test(text);
   const unpaid = /未支付|未付款|未付/.test(text);
   if (!paid) return /部分(?:付款|支付)|(?:付款|支付)部分/.test(text) ? 'uncertain' : unpaid ? 'unpaid' : 'none';

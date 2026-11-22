@@ -1,5 +1,6 @@
 import ExcelJS from 'exceljs';
 import { CATEGORIES } from '../shared/constants.js';
+import { isInformationIssue } from '../shared/issue-level.js';
 import { detailRecords } from '../shared/payment-detail-selection.js';
 import { supplierRecordDetails } from '../shared/supplier-data.js';
 import { makeSheet } from './exports.js';
@@ -7,7 +8,7 @@ import { paymentTableTotals } from './payment-table.js';
 import { sumApplicationAmounts } from './payment-application.js';
 
 const titles = { monthly: '月度付款汇总', pending: '时间待定付款汇总', suppliers: '供应商明细',
-  'pending-suppliers': '时间待定供应商明细', payments: '付款明细', review: '待核对', issues: '待核对事项', drilldown: '付款金额明细' };
+  'pending-suppliers': '时间待定供应商明细', payments: '付款明细', review: '待核对', issues: '待核对事项', notices: '普通提示', drilldown: '付款金额明细' };
 const measures = [['totalCents', '总金额'], ['paidCents', '已支付金额'], ['unpaidCents', '未支付金额'], ['unappliedUnpaidCents', '未提交申请单金额']];
 const amount = cents => cents == null ? '待核对' : cents / 100;
 const text = value => (value == null ? '' : typeof value === 'object' ? JSON.stringify(value) : String(value))
@@ -41,8 +42,8 @@ export function dashboardExportScope(query) {
 const sourceColumns = [['来源文件', 'filename', 42], ['来源工作表', 'sourceSheet', 22], ['原始行', 'sourceRow', 12]];
 const identityColumns = [['供应商', 'supplier', 34], ['跟单员', 'owner'], ['付款主体', 'payer', 22], ['分类', 'category', 26]];
 function identity(record) { return { ...record, category: CATEGORIES[record.category] || record.category }; }
-function writeIssues(book, issues) {
-  makeSheet(book, '待核对事项', [['核对事项', 'title', 28], ['问题', 'message', 65], ['需要核对', 'action', 65], ...sourceColumns,
+function writeIssues(book, issues, title = '待核对事项') {
+  makeSheet(book, title, [[title === '普通提示' ? '提示事项' : '核对事项', 'title', 28], ['问题', 'message', 65], [title === '普通提示' ? '说明与处理' : '需要核对', 'action', 65], ...sourceColumns,
     ['关联位置', 'related', 65]], issues.map(issue => ({ ...issue, related: (issue.relatedLocations || []).map(location =>
     [location.filename, location.sourceSheet, location.sourceRow == null ? '' : `第${location.sourceRow}行`, location.supplier].filter(Boolean).join(' · ')).join('\n') })));
 }
@@ -152,8 +153,9 @@ export async function scopedDashboardExport(data, scope, filters = {}) {
     if (Object.hasOwn(scope, 'detailSupplier')) groups = groups.filter(group => group.supplier === scope.detailSupplier);
     records = groups.flatMap(group => group.records);
     const keys = new Set(records.map(record => record.key));
-    writeReviews(book, groups, Object.hasOwn(scope, 'detailSupplier') ? data.issues.filter(issue => keys.has(issue.recordKey)) : data.issues);
-  } else if (view === 'issues') writeIssues(book, data.issues);
+    writeReviews(book, groups, data.issues.filter(issue => !isInformationIssue(issue) && (!Object.hasOwn(scope, 'detailSupplier') || keys.has(issue.recordKey))));
+  } else if (view === 'issues') writeIssues(book, data.issues.filter(issue => !isInformationIssue(issue)));
+  else if (view === 'notices') writeIssues(book, data.issues.filter(isInformationIssue), '普通提示');
   else if (view === 'drilldown') {
     const table = scope.table === 'pending' ? data.pendingPaymentTable : data.paymentTable;
     const row = table.rows.find(item => item.id === scope.rowId);

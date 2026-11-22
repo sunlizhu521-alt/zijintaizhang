@@ -1,8 +1,9 @@
 import { useRef, useState } from 'react';
 import { CATEGORIES, MAX_UPLOAD_BYTES, ORDER_SLOT, SLOTS } from '../shared/constants.js';
+import { isInformationIssue } from '../shared/issue-level.js';
 import { api, download, useResource } from './api.js';
 import { can, dateTime } from './format.js';
-import { Empty, ErrorNotice, IssuesTable, Loading, Modal, Notice, RecordsTable } from './components.jsx';
+import { Empty, ErrorNotice, InformationNotes, IssuesTable, Loading, Modal, Notice, RecordsTable } from './components.jsx';
 
 export default function Files({ user, orders = false }) {
   const [refresh, setRefresh] = useState(0);
@@ -70,7 +71,8 @@ export default function Files({ user, orders = false }) {
       </>}
       {preview.validationError && <Notice type="warning">{typeof preview.validationError === 'string' ? preview.validationError : preview.validationError.message || '默认工作表校验未通过，请检查原文件或调整工作表选择。'}</Notice>}
       <ErrorNotice error={actionError} />
-      {!!preview.issues?.length && <details><summary>查看默认工作表的核对项</summary><IssuesTable issues={preview.issues} /></details>}
+      {!!preview.issues?.some(issue => !isInformationIssue(issue)) && <details><summary>查看默认工作表的核对项</summary><IssuesTable issues={preview.issues.filter(issue => !isInformationIssue(issue))} /></details>}
+      <InformationNotes issues={preview.issues?.filter(isInformationIssue)} />
       <div className="modal-actions"><button disabled={Boolean(busy)} onClick={() => { setPreview(null); setActionError(null); }}>取消</button><button className="primary" disabled={Boolean(busy) || !selection.length} onClick={activate}>{busy === 'activate' ? '正在校验并保存…' : '校验并替换'}</button></div>
     </Modal>}
     {history && <History slot={{ ...history, ...slots.find(slot => slot.id === history.id) }} user={user} refresh={historyRefresh} onClose={() => setHistory(null)} onRestore={() => { setRefresh(value => value + 1); setHistoryRefresh(value => value + 1); setMessage(`${history.label}已恢复所选历史版本。`); }} />}
@@ -98,7 +100,7 @@ function History({ slot, user, refresh, onClose, onRestore }) {
     {busy && <Loading />}
     {detail && <div className="history-detail"><div className="section-heading"><h3>{detail.version?.filename || '历史版本内容'}</h3><button onClick={() => setDetail(null)}>收起内容</button></div><>{orders ? <WorkbookSheets sheets={detail.sheets} /> : <><p className="muted">以下是该历史文件的数据，不影响当前看板。</p>
       {detail.progressScope && <Notice>{detail.progressScope === 'self' ? '付款依据使用本历史文件自身的付款进度整理。' : '付款依据使用当前有效付款节奏，随当前版本更新。'}{detail.progressSource ? ` 文件：${detail.progressSource.filename}；版本：${detail.progressSource.id?.slice(0, 8)}。` : '当前没有可关联的付款节奏版本，相关付款计未付。'}</Notice>}
-      <RecordsTable records={detail.records} label="历史文件明细" /><details><summary>历史文件待核对事项</summary><IssuesTable issues={detail.issues} /></details></>}</></div>}
+      <RecordsTable records={detail.records} label="历史文件明细" /><details><summary>历史文件待核对事项</summary><IssuesTable issues={detail.issues.filter(issue => !isInformationIssue(issue))} /></details><InformationNotes issues={detail.issues.filter(isInformationIssue)} /></>}</></div>}
   </Modal>;
 }
 

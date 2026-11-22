@@ -1,5 +1,22 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { isInformationIssue } from '../shared/issue-level.js';
+
+test('普通提示与待核对分开，未付款状态和补零不增加核对供应商', () => {
+  const records = [record('info', 'normal', [plan('2026-11', 0)]), record('review', 'normal', [plan('2026-11', 100)], { supplier: '需核对供应商' })];
+  const issues = [{ recordKey: 'info', code: 'ZERO_DEFAULTED', message: '金额按0保存。' },
+    { recordKey: 'info', code: 'PAYMENT_PROGRESS_REVIEW', message: '“付款进度整理”的“是否已付款”为“未付款”，计未付。' },
+    { recordKey: 'review', code: 'PAYMENT_PROGRESS_REVIEW', message: '没有有效流程号，计未付，请核对。' }];
+  const data = buildDashboard(records, issues, [], { month: '2026-11' });
+  assert.equal(data.records.length, 2);
+  assert.equal(data.summary.remainingCents, 100);
+  assert.equal(data.notices.length, 2);
+  assert.equal(data.reviewIssues.length, 1);
+  assert.equal(data.reviewSuppliers.length, 1);
+  assert.equal(data.reviewSuppliers[0].supplier, '需核对供应商');
+  assert.equal(isInformationIssue({ code: 'PAYMENT_PROGRESS_REVIEW', message: '“付款进度整理”的“是否已付款”为“重新申请”，计未付。' }), true);
+  for (const message of ['“是否已付款”为空', '“是否已付款”为“未付款”，但状态冲突', '未匹配流程号']) assert.equal(isInformationIssue({ code: 'PAYMENT_PROGRESS_REVIEW', message }), false);
+});
 import { buildDashboard, findDuplicateIssues } from '../server/dashboard.js';
 
 function record(key, category, plans, extra = {}) {
@@ -227,8 +244,8 @@ test('供应商核对事项去重并保留原消息，关联位置可以追溯�
   assert.equal(data.summary.planCents, 100);
   assert.equal(data.reviewSuppliers.length, 1);
   assert.equal(data.reviewSuppliers[0].totalCents, 100);
-  assert.equal(data.reviewSuppliers[0].reviewIssues.length, 2);
-  assert.equal(data.reviewSuppliers[0].records[0].reviewIssues.length, 2);
+  assert.equal(data.reviewSuppliers[0].reviewIssues.length, 1);
+  assert.equal(data.reviewSuppliers[0].records[0].reviewIssues.length, 1);
   const displayedZero = data.issues.find(issue => issue.code === zero.code);
   assert.equal(displayedZero.message, zero.message);
   assert.equal(displayedZero.filename, 'V6付款.xlsx');
@@ -281,7 +298,7 @@ test('流程号含不支付仅排除待核对，保留金额、零值、待定�
     assert.equal(data.reviewSuppliers.length, 1);
     assert.deepEqual(data.reviewSuppliers[0].records.map(row => row.key), ['r5', 'r6', 'r7', 'r8']);
     assert.equal(data.reviewSuppliers[0].totalCents, 422);
-    assert.equal(data.reviewSuppliers[0].reviewIssues.length, 8);
+    assert.equal(data.reviewSuppliers[0].reviewIssues.length, 4);
     assert.ok(data.issues.every(issue => !issue.recordKey || ['r5', 'r6', 'r7', 'r8'].includes(issue.recordKey)));
     assert.ok(data.issues.some(issue => issue.code === 'MISSING_FILE'));
   }

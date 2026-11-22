@@ -1,3 +1,4 @@
+import { reviewIssueCount } from '../shared/issue-level.js';
 import express from 'express';
 import { createRatingApi } from './rating-api.js';
 import { RATING_BASE } from '../shared/rating.js';
@@ -154,7 +155,7 @@ export function createApp({ db, ratingDb, secureCookies = false, publicOrigin = 
       const categoryCounts = {};
       parsed.records.forEach(r => { categoryCounts[r.category] = (categoryCounts[r.category] || 0) + 1; });
       res.json({ ...draft, ...(inspected.kind ? { kind: inspected.kind } : {}), filename, sheets: inspected.sheets, selectedSheets, recordCount: parsed.records.length,
-        issueCount: parsed.issues.length, issues: parsed.issues, categoryCounts, validationError });
+        issueCount: reviewIssueCount(parsed.issues), issues: parsed.issues, categoryCounts, validationError });
     });
   api.post('/files/:slotId/activate', permission('files'), permission('upload'), async (req, res) => {
     const draft = getDraft(db, req.body.token, req.params.slotId, req.user.id);

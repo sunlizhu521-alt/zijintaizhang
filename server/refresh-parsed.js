@@ -1,3 +1,4 @@
+import { reviewIssueCount } from '../shared/issue-level.js';
 import { PARSER_VERSION, SLOTS } from '../shared/constants.js';
 import { audit, transaction } from './db.js';
 import { runParser } from './parse-job.js';
@@ -29,11 +30,11 @@ export async function refreshParsedVersions(db) {
       parser_version=excluded.parser_version, parsed_json=excluded.parsed_json,
       record_count=excluded.record_count, issue_count=excluded.issue_count`);
     for (const { version, parsed } of refreshed) {
-      update.run(version.id, PARSER_VERSION, JSON.stringify(parsed), parsed.records.length, parsed.issues.length);
+      update.run(version.id, PARSER_VERSION, JSON.stringify(parsed), parsed.records.length, reviewIssueCount(parsed.issues));
       audit(db, { actor: '系统', kind: 'operation', action: '更新文件解析规则', target: version.id, outcome: 'success',
         details: { slotId: version.slot_id, previousParserVersion: version.parser_version, parserVersion: PARSER_VERSION,
           previousRecordCount: version.record_count, recordCount: parsed.records.length,
-          previousIssueCount: version.issue_count, issueCount: parsed.issues.length } });
+          previousIssueCount: version.issue_count, issueCount: reviewIssueCount(parsed.issues) } });
     }
     const now = new Date().toISOString();
     const updateSlot = db.prepare('UPDATE file_slots SET revision=revision+1, updated_at=?, updated_by=? WHERE id=?');

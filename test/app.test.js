@@ -438,7 +438,7 @@ test('筛选导出可重新读取，时间待定中文显示，无 Table/隐藏�
   assert.match(response.headers.get('content-type'), /spreadsheetml/);
   const workbook = new ExcelJS.Workbook();
   await workbook.xlsx.load(response.bytes);
-  assert.deepEqual(workbook.worksheets.map(sheet => sheet.name), ['月度付款汇总', '时间待定付款汇总', '筛选明细', '时间待定明细', '付款明细', '统计口径', '待核对']);
+  assert.deepEqual(workbook.worksheets.map(sheet => sheet.name), ['月度付款汇总', '时间待定付款汇总', '筛选明细', '时间待定明细', '付款明细', '统计口径', '待核对', '普通提示']);
   const monthly = workbook.getWorksheet('月度付款汇总');
   const pending = workbook.getWorksheet('时间待定付款汇总');
   assert.ok(!monthly.getRow(1).values.some(value => String(value).includes('时间待定')));
