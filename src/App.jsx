@@ -45,7 +45,7 @@ export default function App() {
   if (user.mustChangePassword) return <div className={authClass}><section className="auth-card"><Brand /><h1>请设置自己的密码</h1><p className="subtitle">首次登录或管理员重置后，需要修改密码才能使用系统。</p><PasswordForm onSaved={loggedIn} /><button className="text-button auth-logout" onClick={logout} disabled={loggingOut}>退出登录</button><ErrorNotice error={error} /></section></div>;
   if (deliveryPage) return <div className="delivery-shell"><Delivery user={user} onPassword={() => setChangingPassword(true)} onLogout={logout} loggingOut={loggingOut} sessionError={error} />{changingPassword && <Modal title="修改密码" onClose={() => setChangingPassword(false)}><PasswordForm onSaved={result => { loggedIn(result); setChangingPassword(false); }} /></Modal>}</div>;
   const navigation = ordersPage ? (can(user, 'files') ? [{ id: 'orders', label: '采购订单跟进', mark: '▤' }] : []) : [
-    ...(can(user, 'dashboard') ? [{ id: 'dashboard', label: '资金简报', mark: '▥' }, { id: 'payment-analysis', label: '资金付款分析', mark: '▥' }] : []),
+    ...(can(user, 'dashboard') ? [{ id: 'dashboard', label: '资金付款台账', mark: '▥' }, { id: 'payment-analysis', label: '资金付款分析', mark: '▥' }] : []),
     ...(can(user, 'files') ? [{ id: 'files', label: '文件管理', mark: '▤' }] : []),
     ...(user.isAdmin || ['logsLogin', 'logsOperation', 'logsSecurity'].some(permission => can(user, permission)) ? [{ id: 'system', label: '系统管理', mark: '⚙' }] : []),
   ];

@@ -106,7 +106,7 @@ test('下载完整筛选付款，不局限20笔，保留精确元值及原文', 
   assert.equal(sheet.getCell('E2').value, null);
 });
 
-test('OA上传、失败保留、恢复、重启以及资金简报隔离；解析结果实时联动', async t => {
+test('OA上传、失败保留、恢复、重启以及资金付款台账隔离；解析结果实时联动', async t => {
   const f = await appFixture(t), admin = await f.login();
   const initial = await f.upload('corporate_oa', await source([sourceRow()]), admin);
   let result = await f.request('/payment-analysis?paymentCategory=all&year=2026', { session: admin });
