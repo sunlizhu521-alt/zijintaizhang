@@ -1,11 +1,12 @@
 import { commentPaymentDates, commentPaymentState } from './payment-status.js';
 import { oaFlowKey } from './oa-parser.js';
+import { LEDGER_CATEGORIES } from '../shared/constants.js';
 
 const bad = message => Object.assign(new Error(message), { status: 400 });
 export const beijingDate = (now = new Date()) => new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit' }).format(now);
 export function analysisFilters(query, today = beijingDate()) {
   const filters = {};
-  for (const key of ['year', 'supplier', 'payer', 'detailMonth', 'detailSupplier', 'supplierSearch', 'flowCode', 'paymentState']) {
+  for (const key of ['year', 'supplier', 'payer', 'paymentCategory', 'detailMonth', 'detailSupplier', 'supplierSearch', 'flowCode', 'paymentState']) {
     const value = query[key];
     if (value == null) continue;
     if (typeof value !== 'string' || value.length > 250) throw bad('筛选条件无效');
@@ -15,6 +16,7 @@ export function analysisFilters(query, today = beijingDate()) {
   if (!/^\d{4}$/.test(filters.year) || +filters.year < 1900 || +filters.year > +today.slice(0, 4)) throw bad('年份无效');
   if (filters.detailMonth && (!/^\d{4}-(0[1-9]|1[0-2])$/.test(filters.detailMonth) || ![+filters.year, +filters.year - 1].includes(+filters.detailMonth.slice(0, 4)))) throw bad('明细月份不在对比年份范围');
   if (filters.paymentState && !['paid', 'unpaid', 'review'].includes(filters.paymentState)) throw bad('付款状态无效');
+  if (filters.paymentCategory && !['procurement', 'other', 'all'].includes(filters.paymentCategory)) throw bad('付款分类无效');
   return filters;
 }
 export function sumCents(rows, field = 'amountCents') {
@@ -103,8 +105,14 @@ export function oaFlowList(oa, query = {}) {
 }
 export function buildPaymentAnalysis(oa, schedule, query = {}, now = new Date()) {
   const today = beijingDate(now), filters = analysisFilters(query, today), year = +filters.year;
+  filters.paymentCategory ||= 'procurement';
+  const supplierName = value => String(value || '').trim();
+  const procurementSuppliers = new Set(schedule.records.filter(r => LEDGER_CATEGORIES.includes(r.category)).map(r => supplierName(r.supplier)).filter(Boolean));
+  // Classify by the current schedule's supplier list, independent of OA number, year or payer.
+  const inCategory = r => filters.paymentCategory === 'all' || procurementSuppliers.has(supplierName(r.supplier)) === (filters.paymentCategory === 'procurement');
   const { events, issues } = paymentEvents(oa, schedule, today);
-  const filtered = events.filter(r => matches(r, filters));
+  const categoryEvents = events.filter(inCategory);
+  const filtered = categoryEvents.filter(r => matches(r, filters));
   const yearRows = y => filtered.filter(r => +r.paymentDate.slice(0, 4) === y);
   const currentYear = year === +today.slice(0, 4);
   const currentEnd = currentYear ? today : `${year}-12-31`;
@@ -112,7 +120,7 @@ export function buildPaymentAnalysis(oa, schedule, query = {}, now = new Date())
   const day = currentYear ? +today.slice(8, 10) : 31;
   const priorEnd = `${year - 1}-${String(month).padStart(2, '0')}-${String(Math.min(day, new Date(Date.UTC(year - 1, month, 0)).getUTCDate())).padStart(2, '0')}`;
   const current = yearRows(year).filter(r => r.paymentDate <= currentEnd), previous = yearRows(year - 1).filter(r => r.paymentDate <= priorEnd);
-  const previousAvailable = events.some(r => +r.paymentDate.slice(0, 4) === year - 1);
+  const previousAvailable = categoryEvents.some(r => +r.paymentDate.slice(0, 4) === year - 1);
   const currentCents = sumCents(current), previousCents = previousAvailable ? sumCents(previous) : null;
   const monthly = Array.from({ length: 12 }, (_, n) => {
     const suffix = String(n + 1).padStart(2, '0'), active = !currentYear || n + 1 <= month;
@@ -134,6 +142,6 @@ export function buildPaymentAnalysis(oa, schedule, query = {}, now = new Date())
     summary: { currentCents, previousCents, changeCents: previousCents === null ? null : sumCents([{ amountCents: currentCents }, { amountCents: -previousCents }]),
       changePercent: previousCents === null || previousCents === 0 ? null : (currentCents - previousCents) / Math.abs(previousCents) * 100 },
     monthly, suppliers, top10: suppliers.slice(0, 10), records, detailTotalCents: sumCents(records),
-    issues: issues.filter(r => matches(r, filters) && (!r.paymentDate || [year, year - 1].includes(+r.paymentDate.slice(0, 4)))),
+    issues: issues.filter(r => inCategory(r) && matches(r, filters) && (!r.paymentDate || [year, year - 1].includes(+r.paymentDate.slice(0, 4)))),
   };
 }

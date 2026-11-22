@@ -81,7 +81,7 @@ function Drilldown({ filters, detail, user, refresh, onClose }) {
 }
 export default function PaymentAnalysis({ user }) {
   const currentYear = new Intl.DateTimeFormat('en', { year: 'numeric', timeZone: 'Asia/Shanghai' }).format(new Date());
-  const [filters, setFilters] = useState({ year: currentYear, supplier: '', payer: '' });
+  const [filters, setFilters] = useState({ year: currentYear, supplier: '', payer: '', paymentCategory: 'procurement' });
   const [refresh, setRefresh] = useState(0), [detail, setDetail] = useState(null);
   const query = queryString(filters), { data, error, loading } = useResource(`/payment-analysis?${query}`, refresh);
   const versions = Object.values(data?.versions || {}).filter(Boolean);
@@ -91,6 +91,7 @@ export default function PaymentAnalysis({ user }) {
     <section className="panel analysis-filters"><label>年份<select value={filters.year} onChange={e => setFilters({ ...filters, year: e.target.value })}>{[...new Set([+currentYear, +currentYear - 1, +currentYear - 2, ...(data?.years || [])])].sort((a, b) => b - a).map(y => <option key={y} value={y}>{y}年</option>)}</select></label>
       <label>供应商<input placeholder="搜索供应商名称" value={filters.supplier} onChange={e => setFilters({ ...filters, supplier: e.target.value })} /></label>
       <label>付款主体<select value={filters.payer} onChange={e => setFilters({ ...filters, payer: e.target.value })}><option value="">全部主体</option>{data?.payers.map(payer => <option key={payer}>{payer}</option>)}</select></label>
+      <label>付款分类<select value={filters.paymentCategory} onChange={e => setFilters({ ...filters, paymentCategory: e.target.value })}><option value="procurement">采购付款</option><option value="other">其他付款</option><option value="all">全部付款</option></select></label>
       {(filters.supplier || filters.payer) && <button className="text-button" onClick={() => setFilters({ ...filters, supplier: '', payer: '' })}>清空筛选</button>}
     </section>
     <ErrorNotice error={error} />{loading ? <Loading /> : data && <>
@@ -99,7 +100,7 @@ export default function PaymentAnalysis({ user }) {
       <Trend data={data} onSelect={detailMonth => setDetail({ detailMonth })} />
       <section className="panel"><div className="section-heading"><h2>付款供应商 Top10</h2><span className="muted">万元</span></div>{data.top10.length ? <div className="table-wrap"><table className="analysis-top"><thead><tr><th>排名</th><th>供应商</th><th>已付金额</th><th>付款笔数</th></tr></thead><tbody>{data.top10.map((r, i) => <tr key={r.supplier}><td>{i + 1}</td><td><button className="text-button" onClick={() => setDetail({ detailSupplier: r.supplier })}>{r.supplier || '未填写供应商'}</button></td><td>{moneyInWan(r.amountCents)}</td><td>{r.count}</td></tr>)}</tbody></table></div> : <Empty title="当前范围暂无已确认付款" />}</section>
       <section className="panel"><div className="section-heading"><h2>资金付款台账</h2><Download user={user} path={`/payment-analysis/export?${query}`} /></div><p className="scope-note">共 {data.records.length} 笔 · 合计 {moneyInWan(data.detailTotalCents)} 万元</p><PaymentLedger records={data.records} /></section>
-      <details className="panel"><summary>待核对 {data.issues.length} 项</summary><p className="scope-note">已确认金额照常统计；以下事项含日期未定记录及来源冲突，跟随供应商和付款主体筛选。</p>{data.issues.length ? <div className="table-wrap"><table><thead><tr><th>供应商</th><th>流程编号</th><th>需要核对</th><th>原表位置</th></tr></thead><tbody>{data.issues.map((r, i) => <tr key={i}><td>{r.supplier || '—'}</td><td>{r.flowCode || '—'}</td><td>{r.message}</td><td>{r.filename} · {r.sourceSheet} · 第{r.sourceRow}行 {r.sourceCell}</td></tr>)}</tbody></table></div> : <p>暂无待核对事项</p>}</details>
+      <details className="panel"><summary>待核对 {data.issues.length} 项</summary><p className="scope-note">已确认金额照常统计；以下事项跟随供应商、付款主体及付款分类筛选。</p>{data.issues.length ? <div className="table-wrap"><table><thead><tr><th>供应商</th><th>流程编号</th><th>需要核对</th><th>原表位置</th></tr></thead><tbody>{data.issues.map((r, i) => <tr key={i}><td>{r.supplier || '—'}</td><td>{r.flowCode || '—'}</td><td>{r.message}</td><td>{r.filename} · {r.sourceSheet} · 第{r.sourceRow}行 {r.sourceCell}</td></tr>)}</tbody></table></div> : <p>暂无待核对事项</p>}</details>
     </>}
     {detail && <Drilldown filters={filters} detail={detail} user={user} refresh={refresh} onClose={() => setDetail(null)} />}
   </div>;

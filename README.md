@@ -10,7 +10,7 @@
 
 同号重复发票/分摊行只计一次；非谈判流程取签字中最晚有效“出纳执行”日期。谈判付款 sheet 的两类记录优先按已付分期批注的金额和完整日期统计，不叠加整笔 OA；无匹配 OA 的明确已付分期仍保留。缺年份、同格多个日期、金额缺失或来源冲突列入核对，不猜测、不让个别异常覆盖已确认总额。
 
-`GET /payment-analysis` 及 `/payment-analysis/export` 使用看板与导出权限；`GET /oa-flows` 及 `/oa-flows/export` 使用文件与导出权限。筛选支持 year、supplier（关键词）、payer（精确值）；分析下钻支持 detailMonth、detailSupplier（精确值）、supplierSearch，OA 列表支持 flowCode、paymentState。当前年与上年比较到同月同日，历史年份比较全年。图表、Top10、台账及精确元值导出共用服务端统计；下载不局限当前分页。统计仅代表当前上传文件覆盖的数据。
+`GET /payment-analysis` 及 `/payment-analysis/export` 使用看板与导出权限；`GET /oa-flows` 及 `/oa-flows/export` 使用文件与导出权限。筛选支持 year、supplier（关键词）、payer（精确值）；分析新增 paymentCategory（默认 procurement 采购付款，other 其他付款，all 全部付款），按当前有效付款节奏的正常付款及谈判付款表供应商名单完整匹配，忽略首尾空白，不限制 OA 号、付款主体或年份；替换或恢复付款节奏后立即重算分类。分析下钻支持 detailMonth、detailSupplier（精确值）、supplierSearch，OA 列表支持 flowCode、paymentState，保持全部流程。当前年与上年比较到同月同日，历史年份比较全年。图表、Top10、台账、核对事项及精确元值导出共用服务端统计；下载不局限当前分页。统计仅代表当前上传文件覆盖的数据。
 
 ## 计划管理（电脑端）
 

@@ -38,7 +38,7 @@ test('OA重复发票行只统计一次，保留来源行；外币用判断金额
   assert.equal(parsed.records[2].amountCents, 0);
   assert.equal(parsed.records[3].amountCents, null);
   assert.equal(parsed.issues.length, 1);
-  assert.equal(buildPaymentAnalysis(parsed, empty(), { year: '2026' }, now).summary.currentCents, 9296541);
+  assert.equal(buildPaymentAnalysis(parsed, empty(), { paymentCategory: 'all', year: '2026' }, now).summary.currentCents, 9296541);
 });
 test('OA缺表头、坏金额拒绝；同号冲突保留待核对并排除统计', async () => {
   await assert.rejects(parseWorkbook(await source([sourceRow('x', null, '非金额')]), { slotId: 'corporate_oa' }), /金额格式/);
@@ -46,7 +46,7 @@ test('OA缺表头、坏金额拒绝；同号冲突保留待核对并排除统计
   await assert.rejects(parseWorkbook(await syntheticSchedule(), { slotId: 'corporate_oa' }), /必需表头/);
   const parsed = await parseWorkbook(await source([sourceRow(), sourceRow(undefined, '2026-11-19', 200)]), { slotId: 'corporate_oa' });
   assert.equal(parsed.records[0].conflict, true);
-  assert.equal(buildPaymentAnalysis(parsed, empty(), { year: '2026' }, now).records.length, 0);
+  assert.equal(buildPaymentAnalysis(parsed, empty(), { paymentCategory: 'all', year: '2026' }, now).records.length, 0);
   assert.equal(oaFlowList(parsed, { paymentState: 'review' }).records.length, 1);
 });
 test('两类谈判表按已付分期实际日期优先，无OA或OA未执行仍计入，不叠加OA总金额', () => {
@@ -78,26 +78,26 @@ test('月格独有证据可计入；缺年份、多日期、部分付款、未�
 });
 test('年度同比使用相同截止日期；当前未来月份留空；过滤、月度下钻和供应商排序一致', () => {
   const oa = { records: [oaRow('1', '2026-11-20', 500), oaRow('2', '2025-11-22', 100), oaRow('3', '2025-11-23', 9000), oaRow('4', '2026-11-20', 200, '供应商乙')] };
-  const result = buildPaymentAnalysis(oa, empty(), { year: '2026' }, now);
+  const result = buildPaymentAnalysis(oa, empty(), { paymentCategory: 'all', year: '2026' }, now);
   assert.equal(result.summary.currentCents, 700); assert.equal(result.summary.previousCents, 100);
   assert.equal(result.summary.changePercent, 600); assert.equal(result.monthly[11].currentCents, null);
   assert.equal(result.top10[0].supplier, '供应商甲');
-  const drill = buildPaymentAnalysis(oa, empty(), { year: '2026', detailMonth: '2025-11', supplierSearch: '甲' }, now);
+  const drill = buildPaymentAnalysis(oa, empty(), { paymentCategory: 'all', year: '2026', detailMonth: '2025-11', supplierSearch: '甲' }, now);
   assert.equal(drill.records.length, 1); assert.equal(drill.detailTotalCents, 100);
-  const filtered = buildPaymentAnalysis(oa, empty(), { year: '2026', supplier: '乙' }, now);
+  const filtered = buildPaymentAnalysis(oa, empty(), { paymentCategory: 'all', year: '2026', supplier: '乙' }, now);
   assert.equal(filtered.summary.previousCents, 0); assert.equal(filtered.summary.changePercent, null);
-  assert.equal(buildPaymentAnalysis(oa, empty(), { year: '2025' }, now).summary.currentCents, 9100);
+  assert.equal(buildPaymentAnalysis(oa, empty(), { paymentCategory: 'all', year: '2025' }, now).summary.currentCents, 9100);
 });
 test('闰年同期截止、无上年数据、零付款、负金额、筛选校验', () => {
-  const leap = buildPaymentAnalysis({ records: [oaRow('1', '2024-02-29', 0), oaRow('2', '2023-02-28', 0), oaRow('3', '2023-03-01', 200)] }, empty(), { year: '2024' }, new Date('2024-02-29T04:00:00Z'));
+  const leap = buildPaymentAnalysis({ records: [oaRow('1', '2024-02-29', 0), oaRow('2', '2023-02-28', 0), oaRow('3', '2023-03-01', 200)] }, empty(), { paymentCategory: 'all', year: '2024' }, new Date('2024-02-29T04:00:00Z'));
   assert.equal(leap.priorEnd, '2023-02-28'); assert.equal(leap.summary.previousCents, 0); assert.equal(leap.records.length, 1);
-  const d = buildPaymentAnalysis({ records: [oaRow('1', '2026-11-20', -100)] }, empty(), { year: '2026' }, now);
+  const d = buildPaymentAnalysis({ records: [oaRow('1', '2026-11-20', -100)] }, empty(), { paymentCategory: 'all', year: '2026' }, now);
   assert.equal(d.summary.currentCents, -100); assert.equal(d.summary.previousCents, null); assert.equal(d.issues.length, 1);
   for (const query of [{ year: 'abc' }, { year: ['2026'] }, { detailMonth: '2026-13' }, { supplier: {} }, { paymentState: 'other' }]) assert.throws(() => analysisFilters(query, '2026-11-22'));
 });
 test('下载完整筛选付款，不局限20笔，保留精确元值及原文', async () => {
   const oa = { records: Array.from({ length: 25 }, (_, i) => oaRow(String(i), '2026-11-20', 101 + i)), version: { id: 'original', filename: '合成源表.xlsx' } };
-  const data = buildPaymentAnalysis(oa, empty(), { year: '2026', supplier: '甲' }, now);
+  const data = buildPaymentAnalysis(oa, empty(), { paymentCategory: 'all', year: '2026', supplier: '甲' }, now);
   const book = new ExcelJS.Workbook(); await book.xlsx.load(await paymentAnalysisExport(data));
   const sheet = book.getWorksheet('资金付款台账');
   assert.equal(sheet.rowCount, 26);
@@ -109,7 +109,7 @@ test('下载完整筛选付款，不局限20笔，保留精确元值及原文', 
 test('OA上传、失败保留、恢复、重启以及资金简报隔离；解析结果实时联动', async t => {
   const f = await appFixture(t), admin = await f.login();
   const initial = await f.upload('corporate_oa', await source([sourceRow()]), admin);
-  let result = await f.request('/payment-analysis?year=2026', { session: admin });
+  let result = await f.request('/payment-analysis?paymentCategory=all&year=2026', { session: admin });
   assert.equal(result.data.summary.currentCents, 10000);
   assert.equal((await f.request('/dashboard?from=2026-11&to=2026-12', { session: admin })).data.records.length, 0);
   assert.equal((await f.request('/files', { session: admin })).data.slots.length, 4);
@@ -120,17 +120,17 @@ test('OA上传、失败保留、恢复、重启以及资金简报隔离；解析
   const restored = await f.request('/files/corporate_oa/restore', { method: 'POST', session: admin, body: { versionId: initial.versionId, baseRevision: second.activated.data.slot.revision } });
   assert.equal(restored.status, 200);
   await f.restart();
-  assert.equal((await f.request('/payment-analysis?year=2026', { session: admin })).data.summary.currentCents, 10000);
+  assert.equal((await f.request('/payment-analysis?paymentCategory=all&year=2026', { session: admin })).data.summary.currentCents, 10000);
   const scheduleBook = new ExcelJS.Workbook(); await scheduleBook.xlsx.load(await syntheticSchedule());
   scheduleBook.getWorksheet('谈判付款').getCell('L2').note = note('2026年11月19日');
   const scheduleFirst = await f.upload('schedule', Buffer.from(await scheduleBook.xlsx.writeBuffer()), admin);
-  result = await f.request('/payment-analysis?year=2026', { session: admin });
+  result = await f.request('/payment-analysis?paymentCategory=all&year=2026', { session: admin });
   assert.equal(result.data.summary.currentCents, 60000, '匹配谈判表后用分期，替代OA整笔');
   scheduleBook.getWorksheet('谈判付款').getCell('L2').note = '';
   const scheduleSecond = await f.upload('schedule', Buffer.from(await scheduleBook.xlsx.writeBuffer()), admin);
-  assert.equal((await f.request('/payment-analysis?year=2026', { session: admin })).data.summary.currentCents, 0);
+  assert.equal((await f.request('/payment-analysis?paymentCategory=all&year=2026', { session: admin })).data.summary.currentCents, 0);
   await f.request('/files/schedule/restore', { method: 'POST', session: admin, body: { versionId: scheduleFirst.versionId, baseRevision: scheduleSecond.activated.data.slot.revision } });
-  assert.equal((await f.request('/payment-analysis?year=2026', { session: admin })).data.summary.currentCents, 60000);
+  assert.equal((await f.request('/payment-analysis?paymentCategory=all&year=2026', { session: admin })).data.summary.currentCents, 60000);
   const detail = await f.request(`/files/corporate_oa/versions/${initial.versionId}`, { session: admin });
   assert.equal(detail.data.kind, 'corporate_oa'); assert.equal(detail.data.records[0].paymentDate, '2026-11-19');
 });
@@ -151,4 +151,77 @@ test('分析、OA及导出均服务器鉴权，导出包含对应筛选并记录
   assert.equal((await f.request('/oa-flows/export', { session: admin })).status, 200);
   const logs = (await f.request('/logs?kind=operation', { session: admin })).data.items;
   assert.ok(logs.some(r => r.action === '导出资金付款分析' && r.details.supplier === '不存在'));
+});
+
+test('默认采购付款按两张表的完整供应商名单分类，历史、零值、核对和下钻一致', async () => {
+  const schedule = { records: [
+    { category: 'normal', supplier: '供应商甲' }, { category: 'normal_unreconciled', supplier: '供应商乙' },
+    { category: 'negotiated', supplier: '供应商丙' }, { category: 'negotiated_normal', supplier: '供应商丁' },
+    { category: 'normal', supplier: '' }, { category: 'shipment', supplier: '预估供应商' },
+  ] };
+  const oa = { records: [
+    { ...oaRow('A', '2026-11-19', 100, '供应商甲'), payer: '不同主体' }, oaRow('B', '2026-11-19', 0, ' 供应商乙 '),
+    oaRow('C', '2026-11-19', 300, '供应商丙'), oaRow('D', '2026-11-19', 400, '供应商丁'),
+    oaRow('E', '2026-11-19', 500, '其他供应商'), oaRow('F', '2026-11-19', 600, ''),
+    oaRow('G', '2026-11-19', 700, '供应商甲分公司'), oaRow('H', '2026-11-19', 800, '预估供应商'),
+    oaRow('OLD-A', '2025-11-19', 50, '供应商甲'), oaRow('OLD-E', '2025-11-19', 90, '其他供应商'),
+    oaRow('UNKNOWN-A', '2026-11-19', null, '供应商甲'), oaRow('UNKNOWN-E', '2026-11-19', null, '其他供应商'),
+  ] };
+  const purchase = buildPaymentAnalysis(oa, schedule, { year: '2026' }, now);
+  const other = buildPaymentAnalysis(oa, schedule, { year: '2026', paymentCategory: 'other' }, now);
+  const all = buildPaymentAnalysis(oa, schedule, { year: '2026', paymentCategory: 'all' }, now);
+  assert.equal(purchase.filters.paymentCategory, 'procurement');
+  assert.equal(purchase.summary.currentCents, 800); assert.equal(purchase.summary.previousCents, 50);
+  assert.equal(purchase.records.length, 4); assert.ok(purchase.records.some(r => r.amountCents === 0));
+  assert.equal(other.summary.currentCents, 2600); assert.equal(other.summary.previousCents, 90);
+  assert.equal(all.summary.currentCents, purchase.summary.currentCents + other.summary.currentCents);
+  assert.equal(all.monthly[10].currentCents, purchase.monthly[10].currentCents + other.monthly[10].currentCents);
+  assert.deepEqual(purchase.top10.map(r => r.supplier), ['供应商丁', '供应商丙', '供应商甲', ' 供应商乙 ']);
+  assert.deepEqual(purchase.issues.map(r => r.supplier), ['供应商甲']);
+  assert.deepEqual(other.issues.map(r => r.supplier), ['其他供应商']);
+  const prior = buildPaymentAnalysis(oa, schedule, { year: '2026', detailMonth: '2025-11', supplierSearch: '甲' }, now);
+  assert.equal(prior.records.length, 1); assert.equal(prior.detailTotalCents, 50);
+  const filtered = buildPaymentAnalysis(oa, schedule, { year: '2026', supplier: '甲', payer: '不同主体' }, now);
+  assert.equal(filtered.detailTotalCents, 100);
+  assert.equal(buildPaymentAnalysis(oa, empty(), { year: '2026' }, now).records.length, 0);
+  assert.equal(buildPaymentAnalysis(oa, empty(), { year: '2026', paymentCategory: 'other' }, now).summary.currentCents, all.summary.currentCents);
+  const onlyOtherPrior = { records: oa.records.filter(r => r.flowCode !== 'OLD-A') };
+  assert.equal(buildPaymentAnalysis(onlyOtherPrior, schedule, { year: '2026' }, now).summary.previousCents, null);
+  const book = new ExcelJS.Workbook(); await book.xlsx.load(await paymentAnalysisExport(purchase));
+  assert.equal(book.getWorksheet('资金付款台账').rowCount, 5);
+  assert.equal(book.getWorksheet('年度月度对比').getCell('B12').value, 8);
+  assert.ok(book.getWorksheet('统计说明').getColumn(2).values.includes('采购付款'));
+  for (const paymentCategory of ['unknown', ['procurement'], {}]) assert.throws(() => analysisFilters({ paymentCategory }, '2026-11-22'));
+});
+
+test('分类接口默认采购；替换及恢复付款节奏实时改变名单，导出与OA全部列表保持正确范围', async t => {
+  const f = await appFixture(t), admin = await f.login();
+  const otherRow = sourceRow('OTHER', '2026-11-19', 300); otherRow[1] = '其他供应商';
+  await f.upload('corporate_oa', await source([sourceRow('DIFFERENT-OA'), otherRow]), admin);
+  const query = '/payment-analysis?year=2026';
+  assert.equal((await f.request(query, { session: admin })).data.summary.currentCents, 0);
+  assert.equal((await f.request(`${query}&paymentCategory=all`, { session: admin })).data.summary.currentCents, 40000);
+  const schedule = new ExcelJS.Workbook(); await schedule.xlsx.load(await syntheticSchedule());
+  schedule.getWorksheet('正常付款').getCell('B2').value = '供应商甲';
+  const first = await f.upload('schedule', Buffer.from(await schedule.xlsx.writeBuffer()), admin);
+  const purchase = await f.request(query, { session: admin });
+  assert.equal(purchase.data.filters.paymentCategory, 'procurement');
+  assert.equal(purchase.data.summary.currentCents, 10000);
+  assert.equal((await f.request(`${query}&paymentCategory=other`, { session: admin })).data.summary.currentCents, 30000);
+  assert.equal((await f.request('/oa-flows', { session: admin })).data.records.length, 2);
+  const output = await f.request('/payment-analysis/export?year=2026&paymentCategory=other&detailMonth=2026-11', { session: admin });
+  assert.equal(output.status, 200);
+  const book = new ExcelJS.Workbook(); await book.xlsx.load(output.bytes);
+  assert.equal(book.getWorksheet('资金付款台账').rowCount, 2);
+  assert.equal(book.getWorksheet('资金付款台账').getCell('B2').value, '其他供应商');
+  assert.equal(book.getWorksheet('资金付款台账').getCell('F2').value, 300);
+  assert.ok(book.getWorksheet('统计说明').getColumn(2).values.includes('其他付款'));
+  assert.equal((await f.request(`${query}&paymentCategory=bad`, { session: admin })).status, 400);
+  schedule.getWorksheet('正常付款').getCell('B2').value = '更名供应商';
+  const second = await f.upload('schedule', Buffer.from(await schedule.xlsx.writeBuffer()), admin);
+  assert.equal((await f.request(query, { session: admin })).data.summary.currentCents, 0);
+  await f.request('/files/schedule/restore', { method: 'POST', session: admin, body: { versionId: first.versionId, baseRevision: second.activated.data.slot.revision } });
+  assert.equal((await f.request(query, { session: admin })).data.summary.currentCents, 10000);
+  const logs = (await f.request('/logs?kind=operation', { session: admin })).data.items;
+  assert.ok(logs.some(r => r.action === '导出资金付款分析' && r.details.paymentCategory === 'other'));
 });

@@ -18,6 +18,8 @@ export async function paymentAnalysisExport(data) {
   makeSheet(book, '待核对', [['供应商', 'supplier', 36], ['OA流程编号', 'flowCode', 32], ['需要核对', 'message', 70], ['来源文件', 'filename', 48], ['工作表', 'sourceSheet'], ['原始行', 'sourceRow'], ['金额格', 'sourceCell'], ['批注', 'comment', 60]], data.issues);
   makeSheet(book, '统计说明', [['项目', 'name', 30], ['说明', 'value', 100]], [
     { name: '当前年统计截至', value: data.currentEnd }, { name: '上年同期截至', value: data.priorEnd },
+    { name: '付款分类', value: ({ procurement: '采购付款', other: '其他付款', all: '全部付款' })[data.filters.paymentCategory] },
+    { name: '分类依据', value: '当前有效付款节奏文件的正常付款、谈判付款表中出现的供应商归为采购付款，其余归为其他付款。按完整供应商名称匹配（忽略首尾空白），不按OA号、付款主体或年份限制名单；分类同时用于同比、汇总、明细及核对事项。' },
     { name: '统计口径', value: '实际付款日期归月；OA按流程编号去重，取最晚出纳执行日期；谈判表两类优先按明确已付分期批注计款，不叠加整笔OA。未匹配OA的明确分期仍计入并标明来源。' },
     { name: '筛选范围', value: JSON.stringify(data.filters) },
     { name: '台账范围合计（元）', value: amount(data.detailTotalCents) },
