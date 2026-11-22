@@ -25,30 +25,39 @@ export function SupplierSearch({ options, value, onChange }) {
 
 export function Trend({ months, pending }) {
   if (pending || !months.length) return <p className="brief-empty">{pending ? '时间待定记录暂无月度走势' : '暂无月度数据'}</p>;
-  const values = months.flatMap(month => [month.paidCents, month.unpaidCents]).filter(value => value != null);
+  const values = months.flatMap(month => {
+    const amounts = [month.paidCents, month.unpaidCents].filter(value => value != null);
+    return [amounts.reduce((sum, value) => sum + Math.max(0, value), 0), amounts.reduce((sum, value) => sum + Math.min(0, value), 0)];
+  });
   const min = Math.min(0, ...values), max = Math.max(1, ...values);
-  const top = 24, bottom = 174;
+  const top = 40, bottom = 174;
   const y = value => top + (max - value) / (max - min) * (bottom - top);
   const x = position => `${2 + 96 * position / months.length}%`;
-  const barWidth = 36;
-  return <><div className="trend-scroll"><svg style={{ minWidth: Math.max(320, months.length * 112) }} role="img" aria-label="按月展示已付和未付金额，柱顶数值单位万元">
+  const barWidth = 44;
+  return <><div className="trend-scroll"><svg style={{ minWidth: Math.max(320, months.length * 112) }} role="img" aria-label="按月堆叠展示已付和未付金额，已付红色、未付绿色，柱顶数值单位万元">
     <title>月度已付、未付金额（万元）</title>
     {Array.from({ length: 5 }, (_, index) => {
       const amount = min + (max - min) * index / 4;
       return <line key={index} x1="2%" x2="98%" y1={y(amount)} y2={y(amount)} stroke="#E7ECF2" />;
     })}
-    {months.map((month, index) => <g key={month.month}>
+    {months.map((month, index) => {
+      const center = x(index + .5);
+      const positiveTotal = Math.max(0, month.paidCents ?? 0) + Math.max(0, month.unpaidCents ?? 0);
+      let positive = 0, negative = 0;
+      return <g key={month.month}>
       <text x={x(index + .5)} y="204" textAnchor="middle" fill="#6B7280" fontSize="11">{month.month}</text>
-      {[['paidCents', '#2BB8C6', '已付'], ['unpaidCents', '#4C8DFF', '未付']].map(([key, fill, label], metricIndex) => {
-        const amount = month[key], center = x(index + .25 + metricIndex * .5);
-        if (amount == null) return <text key={key} x={center} y={y(0) - 8} textAnchor="middle" fontSize="11" fill="#94683B"><title>{monthText(month.month)}{label}金额待核对</title>?</text>;
+      {[['paidCents', '#D94F4F', '已付'], ['unpaidCents', '#20956C', '未付']].map(([key, fill, label], metricIndex) => {
+        const amount = month[key];
+        const start = amount < 0 ? negative : positive;
+        const end = start + (amount ?? 0);
+        if (amount < 0) negative = end; else positive = end;
         return <g key={key}>
-          <rect x={center} transform={`translate(${-barWidth / 2},0)`} y={Math.min(y(amount), y(0))} width={barWidth} height={Math.abs(y(amount) - y(0))} rx="3" fill={fill}><title>{monthText(month.month)} {label} {moneyInWan(amount)} 万元</title></rect>
-          <text className="trend-value" x={center} y={amount < 0 ? y(amount) + 14 : y(amount) - 8} textAnchor="middle" fill={fill} fontSize="11" fontWeight="600">{moneyInWan(amount)}</text>
+          {amount != null && <rect x={center} transform={`translate(${-barWidth / 2},0)`} y={Math.min(y(start), y(end))} width={barWidth} height={Math.abs(y(end) - y(start))} fill={fill}><title>{`${monthText(month.month)} ${label} ${moneyInWan(amount)} 万元`}</title></rect>}
+          <text className="trend-value" x={center} y={y(positiveTotal) - 24 + metricIndex * 15} textAnchor="middle" fill={fill} fontSize="11" fontWeight="600">{label} {moneyInWan(amount)}</text>
         </g>;
       })}
-    </g>)}
-  </svg></div>{months.some(month => month.uncertainCount > 0) && <p className="muted compact-empty">? 表示金额待核对</p>}</>;
+    </g>; })}
+  </svg></div>{months.some(month => month.paidCents == null || month.unpaidCents == null) && <p className="muted compact-empty">待核对金额暂不绘入柱形</p>}</>;
 }
 
 export function PaymentRecordsTable({ records = [], summary, size = 20, reviewCount = 0, onReview }) {

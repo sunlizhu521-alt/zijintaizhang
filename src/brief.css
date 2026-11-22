@@ -66,8 +66,8 @@ body:has(.funds-shell),body:has(.funds-auth){background:#F4F7FB}
 .trend-scroll svg{display:block;width:100%;height:210px;flex:none}
 .trend-legend{display:flex;gap:12px;align-items:center;font-size:10px;color:#6B7280}
 .trend-legend>span{display:flex;align-items:center;gap:5px}
-.trend-legend>span:before{content:'';width:8px;height:8px;border-radius:2px;background:#2BB8C6}
-.trend-legend>.unpaid:before{background:#4C8DFF}
+.trend-legend>span:before{content:'';width:8px;height:8px;border-radius:2px;background:#D94F4F}
+.trend-legend>.unpaid:before{background:#20956C}
 .brief-empty{padding:28px 8px;text-align:center;color:#6B7280;font-size:12px;margin:0}
 .dashboard-page .brief-scroll-table{overflow:auto}
 .brief-scroll-table table{min-width:900px;table-layout:fixed}
