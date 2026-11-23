@@ -37,6 +37,35 @@ function App() {
     {!bootstrap ? <Empty>正在加载…</Empty> : <>
       {active === 'score' && <>{bundle ? <Scoring key={`${user.id}/${month}`} bundle={bundle} user={user} perform={perform} busy={busy} Modal={Modal} /> : <Empty>{month} 尚未开启，请联系管理员设置评价范围。</Empty>}<ScoreRules rule={bundle?.rule || bootstrap.rule} currentMonth={!!bundle} />{user.isAdmin && <details className="panel rule-editor"><summary>管理员：调整后续月份评分规则</summary><RulesEditor key={bootstrap.rule.id} rule={bootstrap.rule} perform={perform} busy={busy} /></details>}</>}
       {active === 'dashboard' && <>
+        <section className="panel qcds-model" aria-labelledby="qcds-title">
+          <div className="section-heading"><div><h2 id="qcds-title">供应商 QCDS 考核模型</h2><p className="muted">四个维度加权打分，综合评价供应商表现。</p></div></div>
+          <p className="qcds-responsibility">采购履约部负责<strong>交付（D）</strong>和<strong>服务（S）</strong>评分。</p>
+          <div className="qcds-grid">
+            <article className="qcds-card">
+              <header><h3>质量 Q</h3><strong>40%</strong></header>
+              <p>来料批次合格率、产线不良率：既看来料是否合格，也看投入产线后的不良情况。</p>
+              <p className="qcds-criterion">重大质量事故导致停线：质量项扣完，并执行一票否决。</p>
+            </article>
+            <article className="qcds-card">
+              <header><h3>成本 C</h3><strong>30%</strong></header>
+              <p>结合降本配合度与付款条件评价，不能只看采购单价。</p>
+              <p className="qcds-criterion">市场均价下降，供应商却不降反涨：成本项直接不及格。</p>
+            </article>
+            <article className="qcds-card qcds-owned">
+              <header><h3>交付 D</h3><strong>20%</strong></header>
+              <span className="qcds-owner">采购履约部评分</span>
+              <p>准时交付率、交期柔性：同时关注日常交付和急单配合。</p>
+              <p className="qcds-criterion">晚一天扣 2 分，扣完为止；急单配合差，交付项不能给高分。</p>
+            </article>
+            <article className="qcds-card qcds-owned">
+              <header><h3>服务 S</h3><strong>10%</strong></header>
+              <span className="qcds-owner">采购履约部评分</span>
+              <p>售后响应速度、8D 报告及时率、技术配合度。</p>
+              <p className="qcds-criterion">电话不接、微信不回、推卸责任：服务项扣光。</p>
+            </article>
+          </div>
+          <p className="qcds-note muted">下方展示采购履约评分结果；具体评分项目、满分及标准以对应月份的评分规则为准。</p>
+        </section>
         <section className="panel filters"><label>供应商名称<select value={supplierFilter} onChange={e => setSupplierFilter(e.target.value)}><option value="">全部供应商</option>{[...new Map((board?.monthly || []).map(s => [s.supplierId, s])).values()].map(s => <option key={s.supplierId} value={s.supplierId}>{s.name}</option>)}</select></label><label>统计期间<select value={period} onChange={e => setPeriod(e.target.value)}><option value="month">当前月份</option>{[1, 2, 3, 4].map(q => <option key={q} value={`Q${q}`}>{q}季度</option>)}<option value="year">全年</option></select></label><label>等级<select value={grade} onChange={e => setGrade(e.target.value)}><option value="">全部等级</option>{['A', 'B', 'C', 'D'].map(g => <option key={g}>{g}</option>)}</select></label>{allowed(user, 'export') && (bundle || period !== 'month') && <button onClick={() => perform(() => download(period === 'month' ? `/months/${month}/export` : `/dashboard/export?${new URLSearchParams({ year: month.slice(0, 4), period, ...(supplierFilter ? { supplier: supplierFilter } : {}), ...(grade ? { grade } : {}) })}`), '报告已下载')}>导出{period === 'month' ? '当月' : '筛选期间'}报告</button>}</section>
         <Dashboard board={board} month={month} supplier={supplierFilter} period={period} grade={grade} user={user} showDetails={async row => { const result = await perform(() => api(`/months/${row.month}`), ''); if (result) setDetails({ ...result, selected: row.supplierId }); }} />
       </>}
