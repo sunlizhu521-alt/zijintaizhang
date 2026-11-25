@@ -125,3 +125,4 @@ body:has(.funds-shell),body:has(.funds-auth){background:#F4F7FB}
 .dashboard-download button{white-space:nowrap}
 .download-error{font-size:12px;color:#b42318;max-width:280px;overflow-wrap:anywhere}
 @media(max-width:620px){.modal-download-heading{flex-wrap:wrap}.modal-heading-actions{margin-left:auto}.download-actions{gap:8px;justify-content:flex-end}}
+.source-file-table{min-width:680px}

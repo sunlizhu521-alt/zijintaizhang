@@ -6,6 +6,7 @@ import PaymentTable from './PaymentTable.jsx';
 import SupplierTable from './SupplierTable.jsx';
 import { PaymentRecordsTable, ReviewTable, SupplierSearch, Trend } from './brief-sections.jsx';
 import DashboardDownload, { DashboardDownloadContext } from './DashboardDownload.jsx';
+import SourceFileDownload from './SourceFileDownload.jsx';
 
 const newFilters = () => ({ ...upcomingMonths(), supplier: '', month: '' });
 const tabs = [['monthly', '月度汇总'], ['suppliers', '供应商明细'], ['applied', '付款明细'], ['pending', '时间待定'], ['review', '待核对']];
@@ -17,6 +18,7 @@ export default function Dashboard({ user }) {
   const [tab, setTab] = useState('monthly');
   const [refresh, setRefresh] = useState(0);
   const [refreshedAt, setRefreshedAt] = useState(null);
+  const [sourceFilesOpen, setSourceFilesOpen] = useState(false);
   const query = queryString(filters);
   const { data, loading, error } = useResource(`/dashboard?${query}`, refresh);
   useEffect(() => { if (data) setRefreshedAt(new Date().toISOString()); }, [data]);
@@ -33,7 +35,8 @@ export default function Dashboard({ user }) {
   const table = <PaymentTable table={isPending ? data?.pendingPaymentTable : data?.paymentTable} records={data?.records || []} pending={isPending} />;
 
   return <DashboardDownloadContext.Provider value={{ filters, allowed: can(user, 'export') }}><div className="page-stack dashboard-page">
-    <header className="page-heading brief-heading"><div>{view === 'ledger' && <button className="text-button back-brief" onClick={() => setView('brief')}>← 返回资金付款台账</button>}<h1>{view === 'brief' ? '资金付款台账' : '详细台账'}</h1><p className="subtitle">数据截至 {dateTime(data?.updatedAt || refreshedAt)}</p></div><div className="heading-actions"><button className="refresh-button" onClick={() => setRefresh(value => value + 1)} disabled={loading}>刷新数据</button>{view === 'brief' ? <button className="primary" onClick={() => detail('monthly')}>查看详细台账 →</button> : <DashboardDownload label="下载全部结果" />}</div></header>
+    <header className="page-heading brief-heading"><div>{view === 'ledger' && <button className="text-button back-brief" onClick={() => setView('brief')}>← 返回资金付款台账</button>}<h1>{view === 'brief' ? '资金付款台账' : '详细台账'}</h1><p className="subtitle">数据截至 {dateTime(data?.updatedAt || refreshedAt)}</p></div><div className="heading-actions"><button className="refresh-button" onClick={() => setRefresh(value => value + 1)} disabled={loading}>刷新数据</button>{can(user, 'files') && can(user, 'download') && <button onClick={() => setSourceFilesOpen(true)}>下载底表</button>}{view === 'brief' ? <button className="primary" onClick={() => detail('monthly')}>查看详细台账 →</button> : <DashboardDownload label="下载全部结果" />}</div></header>
+    {sourceFilesOpen && <SourceFileDownload onClose={() => setSourceFilesOpen(false)} />}
     <section className="panel brief-filters" aria-label="资金筛选"><div className="brief-filter-fields">
       <label>时间<select value={period} onChange={event => changePeriod(event.target.value)}><option value="upcoming">本月及后两个月</option><option value="all">全部月份</option><option value="custom">自选区间</option><option value="pending">时间待定</option></select></label>
       {period === 'custom' && <><label>开始月份<input type="month" value={filters.from} max={filters.to || undefined} onChange={event => update('from', event.target.value)} /></label><label>结束月份<input type="month" value={filters.to} min={filters.from || undefined} onChange={event => update('to', event.target.value)} /></label></>}
