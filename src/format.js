@@ -5,7 +5,7 @@ export function money(cents) {
 export function moneyInWan(cents) {
   if (cents == null || !Number.isFinite(Number(cents))) return '待核对';
   if (Number(cents) === 0) return '—';
-  return (Number(cents) / 1_000_000).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  return (Math.trunc(Number(cents) / 10_000) / 100).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 export function dateTime(value) {
   if (!value) return '—';
