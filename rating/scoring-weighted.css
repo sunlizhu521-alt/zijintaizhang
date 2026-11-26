@@ -20,3 +20,8 @@
 .rule-cap-setting{display:flex;gap:18px;align-items:center;flex-wrap:wrap;margin:16px 0;padding:14px 16px;border-radius:8px;background:#f8f5ff;text-align:left}
 .rule-cap-setting label{min-width:240px}
 .rule-cap-setting p{margin:0;font-size:12px;color:#746486;line-height:1.8;flex:1;min-width:240px}
+.top-controls{display:flex;align-items:flex-end;justify-content:flex-end;gap:14px;flex-wrap:wrap}
+.top-controls>button{white-space:nowrap}
+.rules-dialog{width:min(1480px,96vw)}
+.rules-dialog .rule-editor-content{margin-top:0}
+@media(max-width:700px){.top:has(.top-controls>button){flex-wrap:wrap}.top:has(.top-controls>button) .top-controls{width:100%;justify-content:space-between;align-items:center;gap:10px}.top-controls>button{font-size:12px}.rules-dialog{padding:17px}}

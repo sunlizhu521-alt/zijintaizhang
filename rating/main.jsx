@@ -12,13 +12,13 @@ const Feedback = React.createContext({ error: '', busy: false });
 const scoreText = value => value == null ? '—' : Number(value).toFixed(1);
 const dateText = value => value ? new Intl.DateTimeFormat('sv-SE', { timeZone: 'Asia/Shanghai' }).format(new Date(value)) : '—';
 const allowed = (u, p) => u.isAdmin || u.permissions.includes(p);
-function Modal({ title, onClose, children }) { const feedback = React.useContext(Feedback); const ref = useRef(); useEffect(() => { ref.current.showModal(); }, []); return <dialog ref={ref} onCancel={e => { e.preventDefault(); if (!feedback.busy) onClose(); }}><header><h2>{title}</h2><button disabled={feedback.busy} onClick={onClose} aria-label="关闭">×</button></header>{feedback.error && <div className="alert" role="alert">{feedback.error}</div>}{children}</dialog>; }
+function Modal({ title, onClose, children, className }) { const feedback = React.useContext(Feedback); const ref = useRef(); useEffect(() => { ref.current.showModal(); }, []); return <dialog ref={ref} className={className} onCancel={e => { e.preventDefault(); if (!feedback.busy) onClose(); }}><header><h2>{title}</h2><button disabled={feedback.busy} onClick={onClose} aria-label="关闭">×</button></header>{feedback.error && <div className="alert" role="alert">{feedback.error}</div>}{children}</dialog>; }
 function Empty({ children = '暂无记录' }) { return <div className="empty">{children}</div>; }
 function App() {
   const [user, setUser] = useState(null), [ready, setReady] = useState(false), [error, setError] = useState(''), [notice, setNotice] = useState(''), [busy, setBusy] = useState(false);
   const [bootstrap, setBootstrap] = useState(null), [month, setMonth] = useState(ratingMonth()), [bundle, setBundle] = useState(null), [board, setBoard] = useState(null), [revision, setRevision] = useState(0);
   const loadedScope = useRef('');
-  const [page, setPage] = useState('score'), [password, setPassword] = useState(false);
+  const [page, setPage] = useState('score'), [password, setPassword] = useState(false), [rulesOpen, setRulesOpen] = useState(false);
   const [supplierFilter, setSupplierFilter] = useState(''), [grade, setGrade] = useState(''), [period, setPeriod] = useState('month'), [details, setDetails] = useState(null), [modelFilter, setModelFilter] = useState('');
   const navigate = id => { setPage(id); setNotice(''); setError(''); };
   const logged = data => { setCsrf(data.csrfToken); setUser(data.user); setError(''); };
@@ -35,10 +35,10 @@ function App() {
   const model = period === 'month' ? ratingModel(bundle?.rule || bootstrap?.rule) : modelFilter || ratingModel(bundle?.rule || bootstrap?.rule);
   const guideRule = isWeightedRule(bundle?.rule) ? bundle.rule : isWeightedRule(bootstrap?.rule) ? bootstrap.rule : QCDS_RULE;
   return <Feedback.Provider value={{ error, busy }}><div className="shell"><aside><Brand /><p className="sidebar-note">采购履约 · 月度评价</p><nav aria-label="主导航">{pages.map(([id, label, icon]) => <button key={id} className={active === id ? 'active' : ''} onClick={() => navigate(id)}><span>{icon}</span>{label}</button>)}</nav><div className="account"><div className="avatar">{user.displayName.slice(0, 1)}</div><strong>{user.displayName}</strong><small>{user.isAdmin ? '管理员' : '评价人'}</small><div className="account-actions"><button onClick={() => setPassword(true)}>修改密码</button><button disabled={busy} onClick={logout}>退出登录</button></div></div></aside>
-    <main><header className="top"><div><p className="eyebrow">SUPPLIER PERFORMANCE</p><h1>{pages.find(p => p[0] === active)?.[1] || '供应商评级'}</h1><p className="muted">以履约事实为依据，让每一次评价都有迹可循。</p></div><label>评价月份<input type="month" value={month} max={ratingMonth()} onChange={e => { if (e.target.value) { setMonth(e.target.value); setSupplierFilter(''); setModelFilter(''); setGrade(''); } }} /></label></header>
+    <main><header className="top"><div><p className="eyebrow">SUPPLIER PERFORMANCE</p><h1>{pages.find(p => p[0] === active)?.[1] || '供应商评级'}</h1><p className="muted">以履约事实为依据，让每一次评价都有迹可循。</p></div><div className="top-controls">{active === 'score' && user.isAdmin && bootstrap && <button className="primary" onClick={() => { setError(''); setRulesOpen(true); }}>编辑标准与参考分档</button>}<label>评价月份<input type="month" value={month} max={ratingMonth()} onChange={e => { if (e.target.value) { setMonth(e.target.value); setSupplierFilter(''); setModelFilter(''); setGrade(''); } }} /></label></div></header>
     {error && <div className="alert" role="alert">{error}</div>}{notice && <div className="notice" role="status">{notice}</div>}
     {!bootstrap ? <Empty>正在加载…</Empty> : <>
-      {active === 'score' && <>{bundle ? <Scoring key={`${user.id}/${month}/${bundle.rule.id}`} bundle={bundle} user={user} perform={perform} busy={busy} Modal={Modal} /> : <Empty>{month} 尚未开启，请联系管理员设置评价范围。</Empty>}<ScoreRules rule={bundle?.rule || bootstrap.rule} currentMonth={!!bundle} />{user.isAdmin && <details className="panel rule-editor"><summary>管理员：调整后续月份评分规则</summary><RulesEditor key={bootstrap.rule.id} rule={bootstrap.rule} perform={perform} busy={busy} /></details>}</>}
+      {active === 'score' && <>{bundle ? <Scoring key={`${user.id}/${month}/${bundle.rule.id}`} bundle={bundle} user={user} perform={perform} busy={busy} Modal={Modal} /> : <Empty>{month} 尚未开启，请联系管理员设置评价范围。</Empty>}<ScoreRules rule={bundle?.rule || bootstrap.rule} currentMonth={!!bundle} /></>}
       {active === 'dashboard' && <>
         <section className="panel qcds-model" aria-labelledby="qcds-title">
           <div className="section-heading"><div><h2 id="qcds-title">供应商 QCDS 考核模型</h2><p className="muted">四个维度加权打分，综合评价供应商表现。</p></div></div>
@@ -86,6 +86,7 @@ function App() {
     <footer>供应商评级 · 人工履约评价 · 日期按北京时间</footer></main>
     {password && <Modal title="修改密码" onClose={() => setPassword(false)}><Password onSaved={data => { logged(data); setPassword(false); }} /></Modal>}
     {details && <Modal title="个人评分明细" onClose={() => setDetails(null)}><ScoreDetails details={details} /></Modal>}
+    {rulesOpen && user.isAdmin && bootstrap && <Modal title="编辑标准与参考分档" className="rules-dialog" onClose={() => setRulesOpen(false)}><RulesEditor key={bootstrap.rule.id} rule={bootstrap.rule} perform={async (...args) => { const result = await perform(...args); if (result) setRulesOpen(false); return result; }} busy={busy} /></Modal>}
   </div></Feedback.Provider>;
 }
 function Brand() { return <div className="brand"><span className="brand-icon">S</span><div>供应商评级<small>SUPPLIER RATING</small></div></div>; }
