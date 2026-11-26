@@ -4,11 +4,15 @@ import { randomUUID } from 'node:crypto';
 import { createAuth } from './auth.js';
 import { transaction, audit, serializeAudit } from './db.js';
 import { runParser } from './parse-job.js';
-import { RATING_BASE, RATING_PERMISSIONS, ratingReferences } from '../shared/rating.js';
-import { initializeRating, fail, textValue, monthValue, now, decode, rules, monthRow, checkRevision, assignment, history, monthBundle, dashboard, openMonth } from './rating-store.js';
+import { RATING_BASE, RATING_PERMISSIONS, ratingNeedsEvidence, validateRatingRule } from '../shared/rating.js';
+import { initializeRating, fail, textValue, monthValue, now, decode, rules, monthRow, checkRevision, checkRule, assignment, history, monthBundle, dashboard, openMonth } from './rating-store.js';
 import { supplierTemplate, exportRating, exportRatingPeriod } from './rating-excel.js';
 import { prepareAssignmentImport, applyAssignmentImport } from './rating-assignment-import.js';
 const can = (user, key) => user.isAdmin || user.permissions.includes(key);
+function filterModel(data, model) {
+  if (model !== undefined && !['ds', 'legacy'].includes(model)) throw fail('评分模型无效');
+  return model ? { model, monthly: data.monthly.filter(s => s.model === model), periods: data.periods.filter(s => s.model === model) } : data;
+}
 function exportResponse(res, name, buffer) { res.attachment(`${name}.xlsx`).type('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet').send(Buffer.from(buffer)); }
 function supplierInput(input, before) { return { code: textValue(input.code ?? before?.code ?? `S${randomUUID()}`, '供应商标识', 80), name: textValue(input.name, '供应商名称', 200), active: input.active === undefined ? before ? !!before.active : true : input.active !== false }; }
 export function createRatingApi(db, { secureCookies = false, publicOrigin = '' } = {}) {
@@ -35,13 +39,13 @@ export function createRatingApi(db, { secureCookies = false, publicOrigin = '' }
     if (!can(req.user, 'dashboard')) bundle.summaries = [];
     res.json(bundle);
   });
-  api.get('/dashboard', auth.requirePermission('dashboard'), (req, res) => res.json(dashboard(db, req.query.year, req.user)));
+  api.get('/dashboard', auth.requirePermission('dashboard'), (req, res) => res.json(filterModel(dashboard(db, req.query.year, req.user), req.query.model)));
   api.get('/dashboard/export', auth.requirePermission('dashboard'), auth.requirePermission('export'), async (req, res) => {
-    const { year, period, supplier, grade } = req.query;
+    const { year, period, supplier, grade, model } = req.query;
     if (!['Q1', 'Q2', 'Q3', 'Q4', 'year'].includes(period)) throw fail('请选择季度或全年');
     if (supplier !== undefined && (typeof supplier !== 'string' || supplier.length > 80)) throw fail('供应商筛选无效');
     if (grade !== undefined && !['A', 'B', 'C', 'D'].includes(grade)) throw fail('等级无效');
-    const data = dashboard(db, year, req.user);
+    const data = filterModel(dashboard(db, year, req.user), model);
     data.periods = data.periods.filter(s => (!supplier || s.supplierId === supplier) && (!grade || s.grade === grade));
     const buffer = await exportRatingPeriod(data, year, period);
     audit(db, { actor: req.user, kind: 'operation', action: '导出期间评级汇总', target: `${year}/${period}`, outcome: 'success' });
@@ -71,20 +75,21 @@ export function createRatingApi(db, { secureCookies = false, publicOrigin = '' }
     const month = req.params.month, supplierId = req.params.supplier;
     const a = assignment(db, month, supplierId, req.user, true);
     if (!a.raters.some(r => r.id === req.user.id)) throw fail('未被指定为此供应商的评价人', 403);
+    const m = monthRow(db, month); checkRule(m, req.body.ruleId);
     const before = decode(db.prepare('SELECT * FROM rating_scores WHERE month=? AND supplier_id=? AND user_id=?').get(month, supplierId, req.user.id));
     checkRevision(before, req.body.revision);
     if (before?.status === 'submitted') throw fail('请先撤回已提交评分再修改', 409);
     const { scores, notes, verified } = req.body;
     if (!scores || typeof scores !== 'object' || Array.isArray(scores) || !notes || typeof notes !== 'object' || Array.isArray(notes)) throw fail('评分内容无效');
     if (!['draft', 'submitted'].includes(req.body.status)) throw fail('评分状态无效');
-    const items = rules(db, monthRow(db, month).rule_id).items;
+    const rule = rules(db, m.rule_id), items = rule.items;
     const values = {}, evidence = {};
     for (const item of items) {
       const value = scores[item.id];
       if (value !== null && value !== undefined && (!Number.isInteger(value) || value < 0 || value > item.max)) throw fail(`${item.name}须为0至${item.max}的整数`);
       values[item.id] = value ?? null;
       evidence[item.id] = textValue(notes[item.id] || '', `${item.name}依据`, 2000, false);
-      if (req.body.status === 'submitted' && (values[item.id] === null || (values[item.id] < item.max && !evidence[item.id]))) throw fail(`${item.name}未填写，或扣分缺少依据`);
+      if (req.body.status === 'submitted' && (values[item.id] === null || (ratingNeedsEvidence(rule, item, values[item.id]) && !evidence[item.id]))) throw fail(`${item.name}未填写，或缺少所需评分依据`);
     }
     if (req.body.status === 'submitted' && verified !== true) throw fail('请确认已核实当月业务和评分依据');
     const data = { scores: values, notes: evidence, verified: verified === true, raterName: req.user.displayName };
@@ -95,6 +100,7 @@ export function createRatingApi(db, { secureCookies = false, publicOrigin = '' }
   api.post('/months/:month/scores/:supplier/withdraw', auth.requirePermission('rate'), (req, res) => res.json(transaction(db, () => {
     const { month, supplier } = req.params;
     assignment(db, month, supplier, req.user, true);
+    checkRule(monthRow(db, month), req.body.ruleId);
     const row = decode(db.prepare('SELECT * FROM rating_scores WHERE month=? AND supplier_id=? AND user_id=?').get(month, supplier, req.user.id));
     if (!row || row.status !== 'submitted') throw fail('没有可撤回的评分', 409);
     checkRevision(row, req.body.revision);
@@ -145,9 +151,16 @@ export function createRatingApi(db, { secureCookies = false, publicOrigin = '' }
     const month = before?.month || monthValue(req.body.month), supplierId = before?.supplier_id || textValue(req.body.supplierId, '供应商ID', 80);
     assignment(db, month, supplierId, req.user);
     if (before && !req.user.isAdmin && before.user_id !== req.user.id) throw fail('不能修改他人的过程记录', 403);
+    const m = monthRow(db, month);
+    if (!before) checkRule(m, req.body.ruleId);
+    const sourceRuleId = before?.sourceRuleId || m.rule_id;
+    const sourceRule = rules(db, sourceRuleId);
     const data = {};
     for (const key of ['item', 'issue', 'attribution', 'action', 'owner', 'dueDate', 'completedDate', 'state', 'review']) data[key] = textValue(req.body[key] || '', key, 2000, ['item', 'issue', 'state'].includes(key));
-    if (!rules(db, monthRow(db, month).rule_id).items.some(i => i.id === data.item) || !['待处理', '处理中', '已完成'].includes(data.state)) throw fail('项目或状态无效');
+    if (before && sourceRuleId !== m.rule_id && data.item !== before.item) throw fail('原规则过程记录的关联项目不能更改');
+    const item = sourceRule?.items.find(i => i.id === data.item);
+    if (!item || !['待处理', '处理中', '已完成'].includes(data.state)) throw fail('项目或状态无效');
+    data.sourceRuleId = sourceRuleId; data.itemName = item.name;
     for (const key of ['dueDate', 'completedDate']) if (data[key] && (!/^20\d{2}-\d{2}-\d{2}$/.test(data[key]) || !Number.isFinite(Date.parse(data[key])) || new Date(data[key]).toISOString().slice(0, 10) !== data[key])) throw fail('日期无效');
     if (data.state === '已完成' && !data.completedDate) throw fail('完成记录须填写实际完成日期');
     if (!req.user.isAdmin) data.review = before?.review || '';
@@ -232,21 +245,19 @@ export function createRatingApi(db, { secureCookies = false, publicOrigin = '' }
   })));
   api.post('/rules', auth.requireAdmin, (req, res) => res.json(transaction(db, () => {
     if (req.body.baseId !== rules(db).id) throw fail('规则已更新，请刷新核对', 409);
-    const items = req.body.items;
-    if (!Array.isArray(items) || !items.length || items.length > 100) throw fail('请保留至少1项评分项目，最多100项');
-    const ids = new Set();
-    const clean = items.map((i, n) => {
-      if (!i || typeof i !== 'object' || Array.isArray(i) || typeof i.id !== 'string' || !/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,79}$/.test(i.id) || Object.hasOwn(Object.prototype, i.id) || i.id === 'prototype' || ids.has(i.id)) throw fail(`第${n + 1}项标识无效或重复`);
-      ids.add(i.id);
-      if (!Number.isInteger(i.max) || i.max < 1 || i.max > 100) throw fail(`第${n + 1}项满分须为1至100的整数`);
-      const references = i.references === undefined ? ratingReferences(i) : i.references;
-      if (!Array.isArray(references) || references.length !== 5 || references.some((v, index) => !Number.isInteger(v) || v < 0 || v > i.max || (index > 0 && v > references[index - 1]))) throw fail(`第${n + 1}项参考分值须为5个从高到低的整数，范围为0至${i.max}`);
-      return { id: i.id, group: textValue(i.group, `第${n + 1}项维度`, 50), name: textValue(i.name, `第${n + 1}项项目`, 100), max: i.max, standard: textValue(i.standard, `第${n + 1}项标准`, 2000), references };
-    });
-    if (clean.reduce((sum, i) => sum + i.max, 0) !== 100) throw fail('各项满分合计必须为100分');
-    db.prepare('INSERT INTO rating_rules(data_json,created_at) VALUES(?,?)').run(JSON.stringify({ items: clean }), now());
-    history(db, req.user, '发布新评分规则', '', '', { items: clean }); return rules(db);
+    let clean;
+    try { clean = validateRatingRule(req.body); } catch (error) { throw fail(error.message); }
+    db.prepare('INSERT INTO rating_rules(data_json,created_at) VALUES(?,?)').run(JSON.stringify(clean), now());
+    history(db, req.user, '发布新评分规则', '', '', clean); return rules(db);
   })));
+  api.get('/months/:month/rule-archives/:archive/export', auth.requireAdmin, async (req, res) => {
+    const month = monthValue(req.params.month);
+    const archive = db.prepare('SELECT * FROM rating_rule_archives WHERE month=? AND migration_key=?').get(month, req.params.archive);
+    if (!archive) throw fail('原规则评分备份不存在', 404);
+    const bundle = JSON.parse(archive.data_json);
+    audit(db, { actor: req.user, kind: 'operation', action: '下载原规则评分备份', target: `${month}/${archive.migration_key}`, outcome: 'success' });
+    exportResponse(res, `供应商评级_${month}_切换前备份_规则V${archive.from_rule_id}`, await exportRating(bundle));
+  });
   api.get('/months/:month/export', auth.requirePermission('export'), async (req, res) => {
     if (!can(req.user, 'dashboard')) throw fail('需要汇总查看权限', 403);
     let bundle = monthBundle(db, req.params.month, req.user), version = 0;

@@ -9,10 +9,11 @@ import { DatabaseSync } from 'node:sqlite';
 import { openDatabase } from '../server/db.js';
 import { initAdmin } from '../server/auth.js';
 import { createApp } from '../server/app.js';
-import { RATING_ITEMS, ratingGrade } from '../shared/rating.js';
+import { RATING_ITEMS, QCDS_RULE, ratingGrade } from '../shared/rating.js';
 import { parseRatingSuppliers, supplierTemplate } from '../server/rating-excel.js';
 import { parseAssignmentWorkbook } from '../server/rating-assignment-import.js';
 import { reviewSupplierNames } from '../shared/rating-supplier-match.js';
+import { applyQcdsMigration, previewQcdsMigration, QCDS_MIGRATION_KEY } from '../server/rating-migration.js';
 const base = '/gongyingshangpingji/api';
 const valueAt = (sheet, header, row = 2) => { const column = sheet.getRow(1).values.indexOf(header); assert.ok(column > 0, header); return sheet.getCell(row, column).value; };
 async function fixture(t) {
@@ -27,6 +28,8 @@ async function fixture(t) {
   const db = openDatabase(join(dir, 'funds.sqlite')), ratingDb = openDatabase(join(dir, 'rating.sqlite'));
   await initAdmin(db, { username: 'admin', displayName: '资金管理员', password: 'Admin12' });
   await initAdmin(ratingDb, { username: 'admin', displayName: '评级管理员', password: 'Rating12' });
+  ratingDb.exec('CREATE TABLE rating_rules(id INTEGER PRIMARY KEY AUTOINCREMENT,data_json TEXT NOT NULL,created_at TEXT NOT NULL)');
+  ratingDb.prepare('INSERT INTO rating_rules(data_json,created_at) VALUES(?,?)').run(JSON.stringify({ items: RATING_ITEMS }), new Date().toISOString());
   const app = createApp({ db, ratingDb, distDir });
   const server = await new Promise(resolve => { const s = app.listen(0, '127.0.0.1', () => resolve(s)); });
   const origin = `http://127.0.0.1:${server.address().port}`;
@@ -38,7 +41,15 @@ async function fixture(t) {
   };
   const login = async (username, password, path = base) => { const r = await request(`${path}/auth/login`, { body: { username, password } }); assert.equal(r.status, 200, JSON.stringify(r.data)); return { ...r.data, cookie: r.cookie.split(';')[0] }; };
   const admin = await login('admin', 'Rating12');
-  const call = async (path, body, method, session = admin, expected = 200) => { const r = await request(base + path, { session, body, method }); assert.equal(r.status, expected, `${path}: ${JSON.stringify(r.data)}`); return r.data; };
+  const call = async (path, body, method, session = admin, expected = 200) => {
+    if (body && !Array.isArray(body) && !Object.hasOwn(body, 'ruleId')) {
+      const match = path.match(/^\/months\/(20\d{2}-\d{2})\/scores\//);
+      const recordMonth = path.startsWith('/records/') ? body.month || ratingDb.prepare('SELECT month FROM rating_records WHERE id=?').get(path.split('/')[2])?.month : null;
+      const month = match?.[1] || recordMonth;
+      if (month) body = { ...body, ruleId: ratingDb.prepare('SELECT rule_id FROM rating_months WHERE month=?').get(month)?.rule_id };
+    }
+    const r = await request(base + path, { session, body, method }); assert.equal(r.status, expected, `${path}: ${JSON.stringify(r.data)}`); return r.data;
+  };
   const user = async username => { const r = await call('/users', { username, displayName: username, password: 'User123', permissions: ['rate', 'dashboard', 'export'] }, 'POST', admin, 201); ratingDb.prepare('UPDATE users SET must_change_password=0 WHERE id=?').run(r.user.id); return login(username, 'User123'); };
   const supplier = async (code = '001') => (await call('/suppliers', { code, name: '合成供应商' + code, active: true })).id;
   const assign = async (month, supplierId, ids, revision = 0) => call(`/months/${month}/assignments/${supplierId}`, { userIds: ids, revision, exempt: false }, 'PUT');
@@ -46,6 +57,70 @@ async function fixture(t) {
   const submit = (month, supplierId, session, factor = 1, revision = 0) => call(`/months/${month}/scores/${supplierId}`, { revision, status: 'submitted', scores: scores(factor), notes: Object.fromEntries(RATING_ITEMS.map(i => [i.id, '合成订单依据'])), verified: true }, 'PUT', session);
   return { db, ratingDb, origin, request, login, call, admin, user, supplier, assign, scores, submit };
 }
+test('D/S个人先封顶再平均，缺失规则令牌拒绝写入，新旧模型跨期分开', async t => {
+  const f = await fixture(t), a = await f.user('ds-a'), b = await f.user('ds-b'), supplierId = await f.supplier();
+  await f.call('/months', { month: '2026-10' }); await f.assign('2026-10', supplierId, [a.user.id]);
+  await f.submit('2026-10', supplierId, a); await f.call('/months/2026-10/close', { revision: 1 });
+  const previous = (await f.call('/bootstrap')).rule;
+  const rule = await f.call('/rules', { ...QCDS_RULE, baseId: previous.id });
+  await f.call('/months', { month: '2026-11' }); await f.assign('2026-11', supplierId, [a.user.id, b.user.id]);
+  const path = `/months/2026-11/scores/${supplierId}`, full = Object.fromEntries(rule.items.map(i => [i.id, 100]));
+  const body = { revision: 0, status: 'submitted', scores: { ...full, urgent: 40 }, notes: {}, verified: true };
+  assert.equal((await f.request(base + path, { session: a, method: 'PUT', body })).status, 409);
+  await f.call(path, { ...body, ruleId: previous.id }, 'PUT', a, 409);
+  await f.call(path, body, 'PUT', a, 400);
+  await f.call(path, { ...body, scores: { ...full, urgent: 59 } }, 'PUT', a, 400);
+  await f.call(path, { ...body, scores: { ...full, urgent: 60 } }, 'PUT', a);
+  await f.call(path + '/withdraw', { revision: 1 }, 'POST', a);
+  await f.call(path, { ...body, revision: 2, notes: { urgent: '合成急单未配合事实' } }, 'PUT', a);
+  await f.call(path, { ...body, scores: full }, 'PUT', b);
+  const month = await f.call('/months/2026-11'), summary = month.summaries[0];
+  assert.equal(summary.model, 'ds'); assert.equal(summary.totalMax, 30); assert.equal(summary.total, 27); assert.equal(summary.grade, '—');
+  assert.equal(summary.groups['交付'], 85); assert.equal(summary.groups['服务'], 100); assert.equal(summary.capCount, 1);
+  assert.equal(summary.itemScores.urgent, 70); assert.equal(summary.normalizedItemScores.urgent, 70);
+  assert.equal((await f.request(base + path + '/withdraw', { session: a, body: { revision: 3 } })).status, 409);
+  await f.call('/months/2026-11/close', { revision: 1 });
+  const board = await f.call('/dashboard?year=2026');
+  const quarter = board.periods.filter(s => s.period === 'Q4');
+  assert.equal(quarter.length, 2); assert.equal(quarter.find(s => s.model === 'legacy').total, 100); assert.equal(quarter.find(s => s.model === 'ds').total, 27);
+  const filtered = await f.call('/dashboard?year=2026&model=ds');
+  assert.ok(filtered.monthly.every(s => s.model === 'ds')); assert.ok(filtered.periods.every(s => s.model === 'ds'));
+  await f.call('/dashboard?year=2026&model=invalid', null, 'GET', f.admin, 400);
+});
+test('11月原评分含服务器草稿可下载，旧过程整改继续跟进且原项目不可改', async t => {
+  const f = await fixture(t), a = await f.user('archive-a'), b = await f.user('archive-b'), supplierId = await f.supplier();
+  await f.call('/months', { month: '2026-11' }); await f.assign('2026-11', supplierId, [a.user.id, b.user.id]);
+  await f.submit('2026-11', supplierId, a);
+  const path = `/months/2026-11/scores/${supplierId}`;
+  await f.call(path, { revision: 0, status: 'draft', scores: { ontime: 25 }, notes: { ontime: '原规则草稿依据' }, verified: false }, 'PUT', b);
+  const recordId = randomUUID(), record = { month: '2026-11', supplierId, revision: 0, item: 'ontime', issue: '原规则交期异常', state: '待处理' };
+  await f.call(`/records/${recordId}`, record, 'PUT', a);
+  const before = await f.call('/months/2026-11');
+  const preview = previewQcdsMigration(f.ratingDb);
+  const moved = applyQcdsMigration(f.ratingDb, { expectedRuleId: preview.expectedRuleId, expectedRevision: preview.expectedRevision, expectedLatestRuleId: preview.latestRuleId, actorId: f.admin.user.id });
+  assert.equal(moved.switched, true);
+  const after = await f.call('/months/2026-11');
+  assert.equal(after.scores.length, 0); assert.equal(after.summaries[0].count, 0); assert.equal(after.ruleArchives.length, 1);
+  assert.equal(after.records[0].sourceRuleId, before.rule.id); assert.equal(after.records[0].itemName, RATING_ITEMS[0].name); assert.equal(after.records[0].revision, 2);
+  await f.call(`/records/${recordId}`, { ...record, revision: 1, state: '处理中' }, 'PUT', a, 409);
+  await f.call(`/records/${recordId}`, { ...record, revision: 2, sourceRuleId: after.rule.id, state: '已完成', completedDate: '2026-11-26', action: '已补齐交货' }, 'PUT', a);
+  await f.call(`/records/${recordId}`, { ...record, revision: 3, item: 'urgent', state: '处理中' }, 'PUT', a, 400);
+  const updated = (await f.call('/months/2026-11')).records[0];
+  assert.equal(updated.sourceRuleId, before.rule.id); assert.equal(updated.state, '已完成');
+  const newId = randomUUID(), newRecord = { ...record, item: 'urgent' };
+  assert.equal((await f.request(base + `/records/${newId}`, { session: a, body: newRecord, method: 'PUT' })).status, 409);
+  await f.call(`/records/${newId}`, newRecord, 'PUT', a);
+  const expPath = base + `/months/2026-11/rule-archives/${QCDS_MIGRATION_KEY}/export`;
+  assert.equal((await f.request(expPath, { session: a })).status, 403);
+  assert.equal((await f.call('/months/2026-11', null, 'GET', a)).ruleArchives.length, 0);
+  const exp = await f.request(expPath, { session: f.admin }); assert.equal(exp.status, 200);
+  const book = new ExcelJS.Workbook(); await book.xlsx.load(Buffer.from(exp.data));
+  const personal = book.getWorksheet('个人评分');
+  const draftRow = personal.getRows(2, personal.rowCount - 1).find(row => valueAt(personal, '评价人', row.number) === b.user.displayName).number;
+  assert.equal(personal.rowCount, 3); assert.equal(valueAt(personal, '状态', draftRow), '草稿');
+  assert.equal(valueAt(personal, `${RATING_ITEMS[0].name}(40分)`, draftRow), 25); assert.match(valueAt(personal, '评分依据', draftRow), /原规则草稿依据/);
+  assert.equal(valueAt(book.getWorksheet('过程记录'), '状态'), '待处理');
+});
 test('评级账号会话、来源、CSRF和财务完全隔离；独立路由资源可用', async t => {
   const f = await fixture(t);
   assert.equal((await f.request(base + '/bootstrap')).status, 401);

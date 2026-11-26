@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { transaction, audit } from './db.js';
-import { RATING_ITEMS, ratingMonth, roundScore, ratingGrade } from '../shared/rating.js';
+import { QCDS_RULE, calculateRating, ratingModel, normalizeRatingScore, ratingMonth, roundScore, ratingGrade } from '../shared/rating.js';
 export const fail = (message, status = 400) => Object.assign(new Error(message), { status });
 export const textValue = (value, name, max = 2000, required = true) => {
   if (typeof value !== 'string' || value.length > max || (required && !value.trim())) throw fail(`${name}无效或未填写`);
@@ -18,10 +18,11 @@ export function initializeRating(db) {
     CREATE TABLE IF NOT EXISTS rating_records(id TEXT PRIMARY KEY, month TEXT NOT NULL, supplier_id TEXT NOT NULL, user_id TEXT NOT NULL REFERENCES users(id), data_json TEXT NOT NULL, revision INTEGER NOT NULL DEFAULT 1, updated_at TEXT NOT NULL, FOREIGN KEY(month,supplier_id) REFERENCES rating_assignments(month,supplier_id));
     CREATE TABLE IF NOT EXISTS rating_history(id TEXT PRIMARY KEY, month TEXT NOT NULL, supplier_id TEXT NOT NULL DEFAULT '', user_id TEXT NOT NULL, action TEXT NOT NULL, data_json TEXT NOT NULL, created_at TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS rating_snapshots(month TEXT NOT NULL REFERENCES rating_months(month), version INTEGER NOT NULL, data_json TEXT NOT NULL, created_at TEXT NOT NULL, PRIMARY KEY(month,version));
+    CREATE TABLE IF NOT EXISTS rating_rule_archives(migration_key TEXT PRIMARY KEY, month TEXT NOT NULL REFERENCES rating_months(month), from_rule_id INTEGER NOT NULL REFERENCES rating_rules(id), to_rule_id INTEGER NOT NULL REFERENCES rating_rules(id), data_json TEXT NOT NULL, created_at TEXT NOT NULL, actor_id TEXT NOT NULL REFERENCES users(id));
     CREATE TABLE IF NOT EXISTS rating_imports(id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id), filename TEXT NOT NULL, content BLOB NOT NULL, data_json TEXT NOT NULL, created_at TEXT NOT NULL, committed INTEGER NOT NULL DEFAULT 0);
     CREATE TABLE IF NOT EXISTS rating_assignment_imports(id TEXT PRIMARY KEY, month TEXT NOT NULL REFERENCES rating_months(month), user_id TEXT NOT NULL REFERENCES users(id), filename TEXT NOT NULL, content BLOB NOT NULL, data_json TEXT NOT NULL, created_at TEXT NOT NULL, committed INTEGER NOT NULL DEFAULT 0);
     CREATE INDEX IF NOT EXISTS rating_records_month ON rating_records(month,supplier_id);`);
-  if (!db.prepare('SELECT id FROM rating_rules LIMIT 1').get()) db.prepare('INSERT INTO rating_rules(data_json,created_at) VALUES(?,?)').run(JSON.stringify({ items: RATING_ITEMS }), now());
+  if (!db.prepare('SELECT id FROM rating_rules LIMIT 1').get()) db.prepare('INSERT INTO rating_rules(data_json,created_at) VALUES(?,?)').run(JSON.stringify(QCDS_RULE), now());
 }
 export function rules(db, id) { return decode(id ? db.prepare('SELECT * FROM rating_rules WHERE id=?').get(id) : db.prepare('SELECT * FROM rating_rules ORDER BY id DESC LIMIT 1').get()); }
 export function monthRow(db, month, writable = false) {
@@ -32,6 +33,7 @@ export function monthRow(db, month, writable = false) {
   return row;
 }
 export function checkRevision(row, revision) { if ((row?.revision || 0) !== revision) throw fail('数据已更新，请刷新后核对；未保存内容仍保留', 409); }
+export function checkRule(m, ruleId) { if (m.rule_id !== ruleId) throw fail('本月评分规则已变化，请刷新后按新规则重新评分；旧版内容未自动套用', 409); }
 export function assignment(db, month, supplierId, user, writable = false) {
   monthRow(db, month, writable);
   const row = decode(db.prepare('SELECT * FROM rating_assignments WHERE month=? AND supplier_id=?').get(month, supplierId));
@@ -49,17 +51,28 @@ export function monthBundle(db, month, user) {
   const assignments = db.prepare("SELECT * FROM rating_assignments WHERE month=? ORDER BY json_extract(data_json,'$.code')").all(month).map(decode).filter(a => user.isAdmin || a.raters.some(r => r.id === user.id));
   const ids = new Set(assignments.map(a => a.supplier_id));
   const scores = db.prepare('SELECT * FROM rating_scores WHERE month=?').all(month).map(decode).filter(s => ids.has(s.supplier_id));
+  const avg = values => values.reduce((sum, value) => sum + value, 0) / values.length;
+  const model = ratingModel(rule), totalMax = model === 'ds' ? 30 : 100;
   const summaries = assignments.map(a => {
     const submitted = scores.filter(s => s.supplier_id === a.supplier_id && s.status === 'submitted' && a.raters.some(r => r.id === s.user_id));
     const count = a.exempt ? 0 : submitted.length;
     const itemScores = Object.fromEntries(rule.items.map(item => [item.id, count ? submitted.reduce((sum, s) => sum + s.scores[item.id], 0) / count : null]));
-    const totalRaw = count ? Object.values(itemScores).reduce((sum, n) => sum + n, 0) : null;
-    const groups = Object.fromEntries([...new Set(rule.items.map(i => i.group))].map(g => [g, count ? rule.items.filter(i => i.group === g).reduce((sum, i) => sum + itemScores[i.id], 0) : null]));
-    return { supplierId: a.supplier_id, code: a.code, name: a.name, month, ruleId: rule.id, itemNames: Object.fromEntries(rule.items.map(i => [i.id, i.name])), exempt: a.exempt, reason: a.reason, expected: a.exempt ? 0 : a.raters.length, count, totalRaw, total: roundScore(totalRaw), grade: ratingGrade(totalRaw), groups, itemScores, status: m.status, closed: m.status === 'closed' };
+    const calculated = count ? submitted.map(s => calculateRating(rule, s.scores)) : [];
+    const totalRaw = count ? avg(calculated.map(s => s.totalRaw)) : null;
+    const groups = Object.fromEntries([...new Set(rule.items.map(i => i.group))].map(g => [g, count ? avg(calculated.map(s => s.groups[g])) : null]));
+    const normalizedItemScores = Object.fromEntries(rule.items.map(i => [i.id, normalizeRatingScore(i, itemScores[i.id])]));
+    return { supplierId: a.supplier_id, code: a.code, name: a.name, month, ruleId: rule.id, model, totalMax, capCount: calculated.filter(s => s.capApplied).length, itemNames: Object.fromEntries(rule.items.map(i => [i.id, i.name])), exempt: a.exempt, reason: a.reason, expected: a.exempt ? 0 : a.raters.length, count, totalRaw, total: roundScore(totalRaw), grade: model === 'ds' ? '—' : ratingGrade(totalRaw), groups, itemScores, normalizedItemScores, status: m.status, closed: m.status === 'closed' };
+  });
+  const recordRules = new Map([[rule.id, rule]]);
+  const records = db.prepare('SELECT * FROM rating_records WHERE month=? ORDER BY updated_at DESC').all(month).map(decode).filter(r => ids.has(r.supplier_id) && (user.isAdmin || r.user_id === user.id)).map(r => {
+    const sourceRuleId = r.sourceRuleId || rule.id;
+    if (!recordRules.has(sourceRuleId)) recordRules.set(sourceRuleId, rules(db, sourceRuleId));
+    return { ...r, sourceRuleId, itemName: r.itemName || recordRules.get(sourceRuleId)?.items.find(i => i.id === r.item)?.name || r.item };
   });
   return { month: m, rule, assignments: assignments.map(a => user.isAdmin ? a : { ...a, raters: a.raters.filter(r => r.id === user.id) }), summaries,
     scores: scores.filter(s => user.isAdmin || s.user_id === user.id),
-    records: db.prepare('SELECT * FROM rating_records WHERE month=? ORDER BY updated_at DESC').all(month).map(decode).filter(r => ids.has(r.supplier_id) && (user.isAdmin || r.user_id === user.id)),
+    records,
+    ruleArchives: user.isAdmin ? db.prepare('SELECT migration_key,month,from_rule_id,to_rule_id,created_at FROM rating_rule_archives WHERE month=? ORDER BY created_at DESC').all(month) : [],
     snapshots: db.prepare('SELECT month,version,created_at FROM rating_snapshots WHERE month=? ORDER BY version DESC').all(month),
     assignmentImport: user.isAdmin ? db.prepare('SELECT id,filename,created_at,json_extract(data_json,\'$.summary\') summary FROM rating_assignment_imports WHERE month=? AND committed=1 ORDER BY created_at DESC,rowid DESC LIMIT 1').get(month) || null : null };
 }
@@ -70,14 +83,15 @@ export function dashboard(db, year, user) {
   const visible = months.flatMap(m => monthBundle(db, m.month, user).summaries);
   const groups = [];
   const supplierIds = [...new Set(visible.map(s => s.supplierId))];
-  for (const supplierId of supplierIds) for (let q = 0; q <= 4; q++) {
-    const relevant = all.filter(s => s.supplierId === supplierId && (q === 0 || Math.ceil(Number(s.month.slice(5)) / 3) === q) && s.closed && s.count);
+  for (const supplierId of supplierIds) for (const model of ['legacy', 'ds']) for (let q = 0; q <= 4; q++) {
+    const relevant = all.filter(s => s.supplierId === supplierId && s.model === model && (q === 0 || Math.ceil(Number(s.month.slice(5)) / 3) === q) && s.closed && s.count);
     if (!relevant.length || relevant.some(s => !visible.some(v => v.month === s.month && v.supplierId === supplierId))) continue;
     const avg = values => values.reduce((a, b) => a + b, 0) / values.length;
     const totalRaw = avg(relevant.map(s => s.totalRaw));
     const dimensions = [...new Set(relevant.flatMap(s => Object.keys(s.groups)))];
+    const itemIds = [...new Set(relevant.flatMap(s => Object.keys(s.normalizedItemScores)))];
     // A dimension absent from an older rule is not a zero score.
-    groups.push({ supplierId, code: relevant[0].code, name: relevant.at(-1).name, period: q ? `Q${q}` : 'year', months: relevant.map(s => s.month), count: relevant.length, partial: relevant.length < (q ? 3 : 12) || relevant.some(s => s.count < s.expected), mixedRules: new Set(relevant.map(s => s.ruleId)).size > 1, total: roundScore(totalRaw), grade: ratingGrade(totalRaw), groups: Object.fromEntries(dimensions.map(g => [g, relevant.every(s => Object.hasOwn(s.groups, g) && s.groups[g] != null) ? avg(relevant.map(s => s.groups[g])) : null])) });
+    groups.push({ supplierId, code: relevant[0].code, name: relevant.at(-1).name, model, totalMax: model === 'ds' ? 30 : 100, period: q ? `Q${q}` : 'year', months: relevant.map(s => s.month), count: relevant.length, partial: relevant.length < (q ? 3 : 12) || relevant.some(s => s.count < s.expected), mixedRules: new Set(relevant.map(s => s.ruleId)).size > 1, totalRaw, total: roundScore(totalRaw), grade: model === 'ds' ? '—' : ratingGrade(totalRaw), capCount: relevant.reduce((sum, s) => sum + s.capCount, 0), itemNames: Object.assign({}, ...relevant.map(s => s.itemNames)), normalizedItemScores: Object.fromEntries(itemIds.map(id => [id, relevant.every(s => s.normalizedItemScores[id] != null) ? avg(relevant.map(s => s.normalizedItemScores[id])) : null])), groups: Object.fromEntries(dimensions.map(g => [g, relevant.every(s => Object.hasOwn(s.groups, g) && s.groups[g] != null) ? avg(relevant.map(s => s.groups[g])) : null])) });
   }
   return { monthly: visible, periods: groups };
 }

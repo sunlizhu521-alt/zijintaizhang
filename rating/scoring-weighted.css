@@ -1,0 +1,22 @@
+.scoring-table.weighted-score-table .score-result-col{width:100px}
+.scoring-table.weighted-score-table .score-cap-note{color:#a76528;font-size:11px;line-height:1.5;margin-top:5px}
+.scoring-table .old-draft-link{display:block;margin-top:6px;padding:4px 7px;font-size:11px;white-space:normal;color:#7859b9;text-align:left}
+.old-draft-raw{max-height:350px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;text-align:left;font-size:12px}
+.rule-edit-table.weighted-rule-table{min-width:1260px}
+.rule-edit-table.weighted-rule-table th:nth-child(1){width:100px}
+.rule-edit-table.weighted-rule-table th:nth-child(2){width:165px}
+.rule-edit-table.weighted-rule-table th:nth-child(3){width:80px}
+.rule-edit-table.weighted-rule-table th:nth-child(4){width:90px}
+.rule-edit-table.weighted-rule-table th:nth-child(5){width:270px}
+.rule-edit-table.weighted-rule-table th:nth-child(6){width:430px}
+.rule-edit-table.weighted-rule-table th:nth-child(7){width:105px}
+.rule-reference-band{display:grid;grid-template-columns:24px 55px 12px 55px minmax(0,1fr);gap:5px;align-items:center;margin-bottom:7px;text-align:left}
+.rule-reference-band:last-child{margin-bottom:0}
+.rule-reference-band>span{font-size:11px;color:#8a7c9f;text-align:center}
+.rule-reference-band input[type=number]{padding:8px 3px;text-align:center}
+.rule-reference-band input[type=text]{padding:8px 6px}
+.rule-weight-totals{display:flex;flex-wrap:wrap;gap:6px 18px;font-size:13px}
+.rule-weight-invalid{color:#b54355}
+.rule-cap-setting{display:flex;gap:18px;align-items:center;flex-wrap:wrap;margin:16px 0;padding:14px 16px;border-radius:8px;background:#f8f5ff;text-align:left}
+.rule-cap-setting label{min-width:240px}
+.rule-cap-setting p{margin:0;font-size:12px;color:#746486;line-height:1.8;flex:1;min-width:240px}

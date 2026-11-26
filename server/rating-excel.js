@@ -2,7 +2,7 @@ import ExcelJS from 'exceljs';
 import { checkArchive } from './parser.js';
 import { normalizeWorksheetParts } from './xlsx-compat.js';
 import { fail, textValue } from './rating-store.js';
-import { RATING_MONTH_LABELS, ratingReferences } from '../shared/rating.js';
+import { RATING_MONTH_LABELS, ratingReferenceText, isWeightedRule, calculateRating, roundScore } from '../shared/rating.js';
 export async function parseRatingSuppliers(buffer) {
   await checkArchive(buffer);
   const book = new ExcelJS.Workbook();
@@ -46,23 +46,42 @@ export async function supplierTemplate() {
 }
 const date = value => value ? new Date(`${value}T00:00:00Z`) : '';
 export async function exportRating(bundle) {
-  const book = new ExcelJS.Workbook();
+  const book = new ExcelJS.Workbook(), weighted = isWeightedRule(bundle.rule);
   const names = new Map(bundle.assignments.map(a => [a.supplier_id, a]));
-  const dimensions = [...new Set(bundle.rule.items.map(i => i.group))];
-  sheet(book, '评分汇总', ['月份', '供应商名称', ...dimensions, '总分', '等级', '已评人数', '应评人数', '状态', '说明'], bundle.summaries.map(s => [s.month, s.name, ...dimensions.map(g => !Object.hasOwn(s.groups, g) || s.groups[g] == null ? '' : Math.round(s.groups[g] * 10) / 10), s.total ?? '', s.grade, s.count, s.expected, s.exempt ? '不参评' : RATING_MONTH_LABELS[bundle.month.status], s.exempt ? s.reason : s.count < s.expected ? '部分评分结果' : '']));
-  sheet(book, '个人评分', ['月份', '供应商名称', '评价人', '状态', ...bundle.rule.items.map(i => `${i.name}(${i.max}分)`), '总分', '评分依据'], bundle.scores.map(s => [s.month, names.get(s.supplier_id)?.name, s.raterName, s.status === 'submitted' ? '已提交' : '草稿', ...bundle.rule.items.map(i => s.scores[i.id] ?? ''), s.status === 'submitted' ? Object.values(s.scores).reduce((a, b) => a + b, 0) : '', bundle.rule.items.map(i => `${i.name}：${s.notes[i.id] || ''}`).join('\n')]));
-  sheet(book, '过程记录', ['月份', '供应商名称', '项目', '问题及依据', '责任归属', '改善措施', '负责人', '计划完成日期', '实际完成日期', '状态', '采购复核意见'], bundle.records.map(r => [r.month, names.get(r.supplier_id)?.name, bundle.rule.items.find(i => i.id === r.item)?.name || r.item, r.issue, r.attribution, r.action, r.owner, date(r.dueDate), date(r.completedDate), r.state, r.review]));
-  sheet(book, '规则说明', ['规则版本', '维度', '项目', '满分', '评分标准', '参考分值'], bundle.rule.items.map(i => [bundle.rule.id, i.group, i.name, i.max, i.standard, ratingReferences(i).join(' / ')]));
-  sheet(book, '统计口径', ['项目', '说明'], [['评分性质', '人工评价分；维度及项目以本月规则为准；不是自动计算的交付达成率'], ['月度分', '已提交完整个人评分等权平均；草稿、撤回、缺评不计入；不参评不计分'], ['等级', '最终成绩四舍五入保留1位小数后定级：A≥90、B≥80、C≥70、D<70'], ['规则', '确认无欠交、风险或异常时相应处理项可满分；不了解情况不能自动满分'], ['季度年度', '只汇总已结月且有评分的月份，按月等权；不足完整期间为阶段结果'], ['报告状态', bundle.month.status === 'closed' ? '结月快照；后续重开生成新版本，旧版本保留' : bundle.month.status === 'paused' ? '临时关闭；已有评分保留，尚未结月' : '当前实时数据，尚未结月']]);
+  const dimensions = weighted ? ['交付', '服务'] : [...new Set(bundle.rule.items.map(i => i.group))];
+  const resultHeaders = weighted ? ['交付分(100分)', '服务分(100分)', '贡献分(30分)'] : [...dimensions, '总分', '等级'];
+  const resultValues = s => [...dimensions.map(g => roundScore(s.groups[g]) ?? ''), s.total ?? '', ...(!weighted ? [s.grade] : [])];
+  sheet(book, '评分汇总', ['月份', '供应商名称', ...resultHeaders, '已评人数', '应评人数', '状态', '说明'], bundle.summaries.map(s => [s.month, s.name, ...resultValues(s), s.count, s.expected, s.exempt ? '不参评' : RATING_MONTH_LABELS[bundle.month.status], s.exempt ? s.reason : `${s.count < s.expected ? '部分评分结果' : ''}${weighted && s.capCount ? ` ${s.capCount}份评价触发交付封顶` : ''}`.trim()]));
+  sheet(book, '个人评分', ['月份', '供应商名称', '评价人', '状态', ...bundle.rule.items.map(i => `${i.name}(${i.max}分)`), ...(weighted ? ['交付分(100分)', '服务分(100分)', '贡献分(30分)', '封顶说明'] : ['总分']), '评分依据'], bundle.scores.map(s => {
+    const result = calculateRating(bundle.rule, s.scores), submitted = s.status === 'submitted';
+    return [s.month, names.get(s.supplier_id)?.name, s.raterName, submitted ? '已提交' : '草稿', ...bundle.rule.items.map(i => s.scores[i.id] ?? ''), ...(weighted ? [submitted ? roundScore(result.groups['交付']) ?? '' : '', submitted ? roundScore(result.groups['服务']) ?? '' : '', submitted ? result.total ?? '' : '', submitted && result.capApplied ? '急单低分，个人交付分最高70分' : ''] : [submitted ? result.total ?? '' : '']), bundle.rule.items.map(i => `${i.name}：${s.notes[i.id] || ''}`).join('\n')];
+  }));
+  sheet(book, '过程记录', ['月份', '供应商名称', '项目', '问题及依据', '责任归属', '改善措施', '负责人', '计划完成日期', '实际完成日期', '状态', '采购复核意见'], bundle.records.map(r => [r.month, names.get(r.supplier_id)?.name, `${r.itemName || bundle.rule.items.find(i => i.id === r.item)?.name || r.item}${r.sourceRuleId && r.sourceRuleId !== bundle.rule.id ? `（原规则V${r.sourceRuleId}）` : ''}`, r.issue, r.attribution, r.action, r.owner, date(r.dueDate), date(r.completedDate), r.state, r.review]));
+  sheet(book, '规则说明', ['规则版本', '维度', '项目', '满分', ...(weighted ? ['组内权重(%)'] : []), '评分标准', weighted ? '参考区间(百分制)' : '参考分值'], bundle.rule.items.map(i => [bundle.rule.id, i.group, i.name, i.max, ...(weighted ? [i.weight] : []), i.standard, ratingReferenceText(bundle.rule, i)]));
+  sheet(book, '统计口径', ['项目', '说明'], [
+    ['评分性质', '人工评价分；维度及项目以本月规则为准；不是自动计算的交付达成率'],
+    ['月度分', weighted ? '每位评价人先按组内权重计算、执行封顶，再对已提交完整个人评分等权平均；草稿、撤回、缺评不计入，不参评不计分' : '已提交完整个人评分等权平均；草稿、撤回、缺评不计入；不参评不计分'],
+    ...(weighted ? [['公式', '交付、服务分别按本月组内权重加权；单项先按得分/满分折算百分制。贡献分=交付×20%+服务×10%，满分30；质量和成本未录入，不计算完整QCDS总分'], ['急单封顶', bundle.rule.cap ? `${bundle.rule.items.find(i => i.id === bundle.rule.cap.itemId)?.name}不超过${bundle.rule.cap.threshold}分(百分制)，个人交付分最高${bundle.rule.cap.max}分；不抬高低分` : '本规则未启用急单封顶'], ['等级', '新版暂不评综合等级'], ['依据', '低于60分(百分制)须填写依据；60分及以上选填；参考区间仅作指引']] : [['等级', '最终成绩四舍五入保留1位小数后定级：A≥90、B≥80、C≥70、D<70']]),
+    ['规则', '核实无相关事件可手动给满分；不了解情况不能自动满分'], ['季度年度', '只汇总相同计算模式下已结月且有评分的月份，按月等权；不足完整期间为阶段结果；中间不舍入，展示保留1位小数'],
+    ['报告状态', bundle.month.status === 'closed' ? '结月快照；后续重开生成新版本，旧版本保留' : bundle.month.status === 'paused' ? '临时关闭；已有评分保留，尚未结月' : '当前实时数据，尚未结月'],
+  ]);
   return book.xlsx.writeBuffer();
 }
 export async function exportRatingPeriod(data, year, period) {
   const book = new ExcelJS.Workbook();
-  const rows = data.periods.filter(s => s.period === period);
-  const dimensions = [...new Set(rows.flatMap(s => Object.keys(s.groups)))];
-  sheet(book, '期间评分汇总', ['年度', '期间', '供应商名称', ...dimensions, '总分', '等级', '有效月份', '说明'], rows.map(s => [Number(year), period === 'year' ? '全年' : period.replace('Q', '') + '季度', s.name, ...dimensions.map(g => !Object.hasOwn(s.groups, g) || s.groups[g] == null ? '' : Math.round(s.groups[g] * 10) / 10), s.total, s.grade, s.months.join('、'), `${s.partial ? '阶段结果 / 含缺评' : '完整期间'}${s.mixedRules ? ' / 跨规则版本' : ''}`]));
-  const keys = new Set(rows.flatMap(s => s.months.map(m => `${s.supplierId}/${m}`)));
-  sheet(book, '月度计算依据', ['月份', '供应商名称', '总分', '等级', '已评', '应评'], data.monthly.filter(s => keys.has(`${s.supplierId}/${s.month}`)).map(s => [s.month, s.name, s.total, s.grade, s.count, s.expected]));
-  sheet(book, '统计口径', ['项目', '说明'], [['汇总', '按已结月且有评分的月均分等权计算，中间保留精度，最终成绩保留1位小数后定级'], ['范围', '只展示全部纳入月份均有权查看的期间汇总；不足完整期间或含缺评时标注阶段结果'], ['评分', '人工履约评价；缺评不补零，不参评不计分'], ['跨版本维度', '跨规则版本单独标注；仅汇总纳入月份均包含的同名维度，缺少的维度留空，不补零；总分仍按月等权计算']]);
+  const selected = data.periods.filter(s => s.period === period);
+  const models = [...new Set(selected.map(s => s.model || 'legacy'))];
+  if (!models.length) models.push(data.model || 'legacy');
+  for (const model of models) {
+    const weighted = model === 'ds', rows = selected.filter(s => (s.model || 'legacy') === model);
+    const dimensions = weighted ? ['交付', '服务'] : [...new Set(rows.flatMap(s => Object.keys(s.groups)))];
+    const prefix = models.length > 1 ? weighted ? '新版' : '历史' : '';
+    const headers = weighted ? ['交付分(100分)', '服务分(100分)', '贡献分(30分)'] : [...dimensions, '总分', '等级'];
+    const values = s => [...dimensions.map(g => roundScore(s.groups[g]) ?? ''), s.total ?? '', ...(!weighted ? [s.grade] : [])];
+    sheet(book, `${prefix}期间评分汇总`, ['年度', '期间', '供应商名称', ...headers, '有效月份', '说明'], rows.map(s => [Number(year), period === 'year' ? '全年' : period.replace('Q', '') + '季度', s.name, ...values(s), s.months.join('、'), `${s.partial ? '阶段结果 / 含缺评' : '完整期间'}${s.mixedRules ? ' / 跨规则版本' : ''}`]));
+    const keys = new Set(rows.flatMap(s => s.months.map(m => `${s.supplierId}/${m}`)));
+    sheet(book, `${prefix}月度计算依据`, ['月份', '供应商名称', ...headers, '已评', '应评'], data.monthly.filter(s => (s.model || 'legacy') === model && keys.has(`${s.supplierId}/${s.month}`)).map(s => [s.month, s.name, ...values(s), s.count, s.expected]));
+  }
+  sheet(book, '统计口径', ['项目', '说明'], [['汇总', '相同计算模式内，按已结月且有评分的月均分等权计算，中间保留精度，展示保留1位小数'], ['范围', '只展示全部纳入月份均有权查看的期间汇总；不足完整期间或含缺评时标注阶段结果'], ['新版贡献分', '交付分×20%+服务分×10%，满分30，暂不评综合等级；个人先执行封顶，再取平均'], ['历史等级', '仅历史100分模式按A≥90、B≥80、C≥70、D<70定级；不与新版30分贡献分混算'], ['评分', '人工履约评价；缺评不补零，不参评不计分'], ['跨版本维度', '跨规则版本单独标注；仅汇总纳入月份均包含的同名维度，缺少的维度留空，不补零']]);
   return book.xlsx.writeBuffer();
 }
