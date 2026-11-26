@@ -25,3 +25,7 @@
 .rules-dialog{width:min(1480px,96vw)}
 .rules-dialog .rule-editor-content{margin-top:0}
 @media(max-width:700px){.top:has(.top-controls>button){flex-wrap:wrap}.top:has(.top-controls>button) .top-controls{width:100%;justify-content:space-between;align-items:center;gap:10px}.top-controls>button{font-size:12px}.rules-dialog{padding:17px}}
+.system-tabs{display:flex;gap:10px;flex-wrap:wrap;padding:12px}
+.system-tabs button{border-color:transparent;background:transparent;padding:11px 18px;color:#787185}
+.system-tabs button.active{background:#f0eaff;border-color:#e2d8ff;color:#7655c9;font-weight:600}
+@media(max-width:700px){.system-tabs{gap:6px;padding:9px}.system-tabs button{padding:9px 11px;font-size:12px}}

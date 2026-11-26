@@ -12,15 +12,16 @@ const Feedback = React.createContext({ error: '', busy: false });
 const scoreText = value => value == null ? '—' : Number(value).toFixed(1);
 const dateText = value => value ? new Intl.DateTimeFormat('sv-SE', { timeZone: 'Asia/Shanghai' }).format(new Date(value)) : '—';
 const allowed = (u, p) => u.isAdmin || u.permissions.includes(p);
+const SYSTEM_PAGES = [['records', '过程监控'], ['suppliers', '供应商管理'], ['manage', '评价管理'], ['users', '用户管理'], ['history', '操作记录']];
 function Modal({ title, onClose, children, className }) { const feedback = React.useContext(Feedback); const ref = useRef(); useEffect(() => { ref.current.showModal(); }, []); return <dialog ref={ref} className={className} onCancel={e => { e.preventDefault(); if (!feedback.busy) onClose(); }}><header><h2>{title}</h2><button disabled={feedback.busy} onClick={onClose} aria-label="关闭">×</button></header>{feedback.error && <div className="alert" role="alert">{feedback.error}</div>}{children}</dialog>; }
 function Empty({ children = '暂无记录' }) { return <div className="empty">{children}</div>; }
 function App() {
   const [user, setUser] = useState(null), [ready, setReady] = useState(false), [error, setError] = useState(''), [notice, setNotice] = useState(''), [busy, setBusy] = useState(false);
   const [bootstrap, setBootstrap] = useState(null), [month, setMonth] = useState(ratingMonth()), [bundle, setBundle] = useState(null), [board, setBoard] = useState(null), [revision, setRevision] = useState(0);
   const loadedScope = useRef('');
-  const [page, setPage] = useState('score'), [password, setPassword] = useState(false), [rulesOpen, setRulesOpen] = useState(false);
+  const [page, setPage] = useState('score'), [systemPage, setSystemPage] = useState('records'), [password, setPassword] = useState(false), [rulesOpen, setRulesOpen] = useState(false);
   const [supplierFilter, setSupplierFilter] = useState(''), [grade, setGrade] = useState(''), [period, setPeriod] = useState('month'), [details, setDetails] = useState(null), [modelFilter, setModelFilter] = useState('');
-  const navigate = id => { setPage(id); setNotice(''); setError(''); };
+  const navigate = id => { if (SYSTEM_PAGES.some(([key]) => key === id)) { setPage('system'); setSystemPage(id); } else setPage(id); setNotice(''); setError(''); };
   const logged = data => { setCsrf(data.csrfToken); setUser(data.user); setError(''); };
   useEffect(() => { api('/auth/session').then(logged).catch(e => { if (e.status !== 401) setError(e.message); }).finally(() => setReady(true)); const expired = () => { setUser(null); setBundle(null); setBoard(null); setCsrf(''); setError('登录已失效，请重新登录'); }; window.addEventListener('rating-expired', expired); return () => window.removeEventListener('rating-expired', expired); }, []);
   useEffect(() => { if (!user || user.mustChangePassword) return; let live = true; const scope = `${user.id}/${month}`; if (loadedScope.current !== scope) { setBundle(null); setBoard(null); loadedScope.current = scope; }
@@ -30,8 +31,10 @@ function App() {
   if (!ready) return <Empty>正在加载…</Empty>;
   if (!user) return <Auth onLogin={logged} error={error} />;
   if (user.mustChangePassword) return <div className="auth"><section className="auth-card"><Brand /><h1>设置自己的密码</h1><Password onSaved={logged} /><button onClick={logout}>退出登录</button></section></div>;
-  const pages = [...(allowed(user, 'rate') ? [['score', '月度打分', '✎']] : []), ...(allowed(user, 'dashboard') ? [['dashboard', '汇总看板', '▥']] : []), ...(allowed(user, 'rate') ? [['records', '过程监控', '☷']] : []), ...(user.isAdmin ? [['suppliers', '供应商管理', '▦'], ['manage', '评价管理', '⚙'], ['users', '用户管理', '♙'], ['history', '操作记录', '↺']] : [])];
+  const systemPages = SYSTEM_PAGES.filter(([id]) => id === 'records' ? allowed(user, 'rate') : user.isAdmin);
+  const pages = [...(allowed(user, 'rate') ? [['score', '月度打分', '✎']] : []), ...(allowed(user, 'dashboard') ? [['dashboard', '汇总看板', '▥']] : []), ...(systemPages.length ? [['system', '系统操作', '⚙']] : [])];
   const active = pages.some(p => p[0] === page) ? page : pages[0]?.[0];
+  const activeSystem = systemPages.some(([id]) => id === systemPage) ? systemPage : systemPages[0]?.[0];
   const model = period === 'month' ? ratingModel(bundle?.rule || bootstrap?.rule) : modelFilter || ratingModel(bundle?.rule || bootstrap?.rule);
   const guideRule = isWeightedRule(bundle?.rule) ? bundle.rule : isWeightedRule(bootstrap?.rule) ? bootstrap.rule : QCDS_RULE;
   return <Feedback.Provider value={{ error, busy }}><div className="shell"><aside><Brand /><p className="sidebar-note">采购履约 · 月度评价</p><nav aria-label="主导航">{pages.map(([id, label, icon]) => <button key={id} className={active === id ? 'active' : ''} onClick={() => navigate(id)}><span>{icon}</span>{label}</button>)}</nav><div className="account"><div className="avatar">{user.displayName.slice(0, 1)}</div><strong>{user.displayName}</strong><small>{user.isAdmin ? '管理员' : '评价人'}</small><div className="account-actions"><button onClick={() => setPassword(true)}>修改密码</button><button disabled={busy} onClick={logout}>退出登录</button></div></div></aside>
@@ -78,10 +81,15 @@ function App() {
         </section>
         <Dashboard board={board} month={month} supplier={supplierFilter} period={period} grade={model === 'legacy' ? grade : ''} model={model} user={user} showDetails={async row => { const result = await perform(() => api(`/months/${row.month}`), ''); if (result) setDetails({ ...result, selected: row.supplierId }); }} />
       </>}
-      {active === 'records' && (bundle ? <Records bundle={bundle} user={user} perform={perform} busy={busy} /> : <Empty>请先开启月份并上传采购履约表。</Empty>)}
-      {['manage', 'suppliers'].includes(active) && <Management key={`${active}/${month}`} view={active} onNavigate={navigate} bootstrap={bootstrap} bundle={bundle} month={month} perform={perform} busy={busy} />}
-      {active === 'users' && <Users perform={perform} busy={busy} revision={revision} user={user} onSelfChanged={logout} />}
-      {active === 'history' && <History month={month} revision={revision} />}
+      {active === 'system' && <>
+        <div className="panel system-tabs" role="group" aria-label="系统操作功能">{systemPages.map(([id, label]) => <button key={id} className={activeSystem === id ? 'active' : ''} aria-pressed={activeSystem === id} onClick={() => navigate(id)}>{label}</button>)}</div>
+        <section aria-label={systemPages.find(([id]) => id === activeSystem)?.[1]}>
+          {activeSystem === 'records' && (bundle ? <Records key={month} bundle={bundle} user={user} perform={perform} busy={busy} /> : <Empty>请先开启月份并上传采购履约表。</Empty>)}
+          {['manage', 'suppliers'].includes(activeSystem) && <Management key={`${activeSystem}/${month}`} view={activeSystem} onNavigate={navigate} bootstrap={bootstrap} bundle={bundle} month={month} perform={perform} busy={busy} />}
+          {activeSystem === 'users' && <Users perform={perform} busy={busy} revision={revision} user={user} onSelfChanged={logout} />}
+          {activeSystem === 'history' && <History month={month} revision={revision} />}
+        </section>
+      </>}
     </>}
     <footer>供应商评级 · 人工履约评价 · 日期按北京时间</footer></main>
     {password && <Modal title="修改密码" onClose={() => setPassword(false)}><Password onSaved={data => { logged(data); setPassword(false); }} /></Modal>}
