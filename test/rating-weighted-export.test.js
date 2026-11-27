@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import ExcelJS from 'exceljs';
-import { QCDS_RULE, RATING_ITEMS, calculateRating, roundScore, ratingGrade } from '../shared/rating.js';
+import { QCDS_RULE as TEN_POINT_RULE, RATING_ITEMS, calculateRating, roundScore, ratingGrade } from '../shared/rating.js';
+const QCDS_RULE = { ...TEN_POINT_RULE, items: TEN_POINT_RULE.items.map(item => ({ ...item, max: 100 })) };
 import { exportRating, exportRatingPeriod } from '../server/rating-excel.js';
 
 const headers = worksheet => worksheet.getRow(1).values.slice(1);
@@ -56,22 +57,22 @@ test('新版月报与个人明细保留三类分数，先个人封顶后平均�
   assert.equal((valueAt(individuals, '贡献分(30分)', 2) + valueAt(individuals, '贡献分(30分)', 3)) / 2, valueAt(summary, '贡献分(30分)'));
 });
 
-test('新版导出包含组内权重、四档原文、低分依据及旧过程项目来源', async () => {
+test('新版导出包含组内权重、四档原文、选填依据及旧过程项目来源', async () => {
   const rule = { ...QCDS_RULE, id: 5 }, data = bundle(rule, '2026-11', [full(rule)]);
   data.records.push({ month: '2026-11', supplier_id: 'supplier-1', item: 'old-item', itemName: '原交付承诺项目', sourceRuleId: 1, issue: '合成旧问题', attribution: '供应商', action: '继续跟进', owner: '合成负责人', dueDate: '2026-11-30', completedDate: '', state: '处理中', review: '' });
   const book = await readBook(await exportRating(data)), rules = book.getWorksheet('规则说明');
   assert.equal(rules.rowCount, 8);
   assert.equal(valueAt(rules, '组内权重(%)'), 50);
   assert.equal(valueAt(rules, '组内权重(%)', 5), 30);
-  assert.match(valueAt(rules, '参考区间(百分制)'), /90—100分：基本都按期，偶尔小延误/);
-  assert.equal(valueAt(rules, '参考区间(百分制)').split('\n').length, 4);
-  assert.match(valueAt(rules, '参考区间(百分制)', 4), /0—40分：装死、不配合/);
-  assert.match(valueAt(rules, '参考区间(百分制)', 5), /0分：电话不接、微信不回、推卸责任/);
+  assert.match(valueAt(rules, '参考区间(项目分值)'), /90—100分：基本都按期，偶尔小延误/);
+  assert.equal(valueAt(rules, '参考区间(项目分值)').split('\n').length, 4);
+  assert.match(valueAt(rules, '参考区间(项目分值)', 4), /0—40分：装死、不配合/);
+  assert.match(valueAt(rules, '参考区间(项目分值)', 5), /0分：电话不接、微信不回、推卸责任/);
   assert.equal(valueAt(book.getWorksheet('过程记录'), '项目'), '原交付承诺项目（原规则V1）');
   const dueDateColumn = headers(book.getWorksheet('过程记录')).indexOf('计划完成日期') + 1;
   assert.equal(book.getWorksheet('过程记录').getCell(2, dueDateColumn).numFmt, 'yyyy-mm-dd');
   const statements = book.getWorksheet('统计口径').getColumn(2).values.filter(Boolean).join('\n');
-  assert.match(statements, /低于60分/); assert.match(statements, /每位评价人先/); assert.match(statements, /满分30/);
+  assert.match(statements, /评分依据选填/); assert.match(statements, /每位评价人先/); assert.match(statements, /满分30/);
 });
 
 test('旧规则和旧快照继续导出原100分列、等级、五档参考，不冒充30分贡献', async () => {

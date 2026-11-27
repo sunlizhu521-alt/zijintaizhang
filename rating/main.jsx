@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { api, download, setCsrf } from './api.js';
-import { RATING_BANDS, RATING_PERMISSIONS, RATING_MONTH_LABELS, ratingMonth, ratingReferenceText, isWeightedRule, ratingModel, calculateRating, QCDS_RULE } from '../shared/rating.js';
+import { RATING_BANDS, RATING_PERMISSIONS, RATING_MONTH_LABELS, ratingMonth, ratingReferenceText, ratingBandScore, isWeightedRule, ratingModel, calculateRating, QCDS_RULE } from '../shared/rating.js';
 import { PASSWORD_MESSAGE } from '../shared/password.js';
 import FulfillmentImport from './FulfillmentImport.jsx';
 import Scoring from './Scoring.jsx';
@@ -12,14 +12,14 @@ const Feedback = React.createContext({ error: '', busy: false });
 const scoreText = value => value == null ? '—' : Number(value).toFixed(1);
 const dateText = value => value ? new Intl.DateTimeFormat('sv-SE', { timeZone: 'Asia/Shanghai' }).format(new Date(value)) : '—';
 const allowed = (u, p) => u.isAdmin || u.permissions.includes(p);
-const SYSTEM_PAGES = [['records', '过程监控'], ['suppliers', '供应商管理'], ['manage', '评价管理'], ['users', '用户管理'], ['history', '操作记录']];
+const SYSTEM_PAGES = [['records', '过程监控'], ['suppliers', '供应商管理'], ['manage', '评价管理'], ['rules', '评价内容设置'], ['users', '用户管理'], ['history', '操作记录']];
 function Modal({ title, onClose, children, className }) { const feedback = React.useContext(Feedback); const ref = useRef(); useEffect(() => { ref.current.showModal(); }, []); return <dialog ref={ref} className={className} onCancel={e => { e.preventDefault(); if (!feedback.busy) onClose(); }}><header><h2>{title}</h2><button disabled={feedback.busy} onClick={onClose} aria-label="关闭">×</button></header>{feedback.error && <div className="alert" role="alert">{feedback.error}</div>}{children}</dialog>; }
 function Empty({ children = '暂无记录' }) { return <div className="empty">{children}</div>; }
 function App() {
   const [user, setUser] = useState(null), [ready, setReady] = useState(false), [error, setError] = useState(''), [notice, setNotice] = useState(''), [busy, setBusy] = useState(false);
   const [bootstrap, setBootstrap] = useState(null), [month, setMonth] = useState(ratingMonth()), [bundle, setBundle] = useState(null), [board, setBoard] = useState(null), [revision, setRevision] = useState(0);
   const loadedScope = useRef('');
-  const [page, setPage] = useState('score'), [systemPage, setSystemPage] = useState('records'), [password, setPassword] = useState(false), [rulesOpen, setRulesOpen] = useState(false);
+  const [page, setPage] = useState('score'), [systemPage, setSystemPage] = useState('records'), [password, setPassword] = useState(false);
   const [supplierFilter, setSupplierFilter] = useState(''), [grade, setGrade] = useState(''), [period, setPeriod] = useState('month'), [details, setDetails] = useState(null), [modelFilter, setModelFilter] = useState('');
   const navigate = id => { if (SYSTEM_PAGES.some(([key]) => key === id)) { setPage('system'); setSystemPage(id); } else setPage(id); setNotice(''); setError(''); };
   const logged = data => { setCsrf(data.csrfToken); setUser(data.user); setError(''); };
@@ -38,7 +38,7 @@ function App() {
   const model = period === 'month' ? ratingModel(bundle?.rule || bootstrap?.rule) : modelFilter || ratingModel(bundle?.rule || bootstrap?.rule);
   const guideRule = isWeightedRule(bundle?.rule) ? bundle.rule : isWeightedRule(bootstrap?.rule) ? bootstrap.rule : QCDS_RULE;
   return <Feedback.Provider value={{ error, busy }}><div className="shell"><aside><Brand /><p className="sidebar-note">采购履约 · 月度评价</p><nav aria-label="主导航">{pages.map(([id, label, icon]) => <button key={id} className={active === id ? 'active' : ''} onClick={() => navigate(id)}><span>{icon}</span>{label}</button>)}</nav><div className="account"><div className="avatar">{user.displayName.slice(0, 1)}</div><strong>{user.displayName}</strong><small>{user.isAdmin ? '管理员' : '评价人'}</small><div className="account-actions"><button onClick={() => setPassword(true)}>修改密码</button><button disabled={busy} onClick={logout}>退出登录</button></div></div></aside>
-    <main><header className="top"><div><p className="eyebrow">SUPPLIER PERFORMANCE</p><h1>{pages.find(p => p[0] === active)?.[1] || '供应商评级'}</h1><p className="muted">以履约事实为依据，让每一次评价都有迹可循。</p></div><div className="top-controls">{active === 'score' && user.isAdmin && bootstrap && <button className="primary" onClick={() => { setError(''); setRulesOpen(true); }}>编辑标准与参考分档</button>}<label>评价月份<input type="month" value={month} max={ratingMonth()} onChange={e => { if (e.target.value) { setMonth(e.target.value); setSupplierFilter(''); setModelFilter(''); setGrade(''); } }} /></label></div></header>
+    <main><header className="top"><div><p className="eyebrow">SUPPLIER PERFORMANCE</p><h1>{pages.find(p => p[0] === active)?.[1] || '供应商评级'}</h1><p className="muted">以履约事实为依据，让每一次评价都有迹可循。</p></div><div className="top-controls">{active === 'score' && user.isAdmin && bootstrap && <button className="primary" onClick={() => navigate('rules')}>编辑标准与参考分档</button>}<label>评价月份<input type="month" value={month} max={ratingMonth()} onChange={e => { if (e.target.value) { setMonth(e.target.value); setSupplierFilter(''); setModelFilter(''); setGrade(''); } }} /></label></div></header>
     {error && <div className="alert" role="alert">{error}</div>}{notice && <div className="notice" role="status">{notice}</div>}
     {!bootstrap ? <Empty>正在加载…</Empty> : <>
       {active === 'score' && <>{bundle ? <Scoring key={`${user.id}/${month}/${bundle.rule.id}`} bundle={bundle} user={user} perform={perform} busy={busy} Modal={Modal} /> : <Empty>{month} 尚未开启，请联系管理员设置评价范围。</Empty>}<ScoreRules rule={bundle?.rule || bootstrap.rule} currentMonth={!!bundle} /></>}
@@ -61,7 +61,7 @@ function App() {
               <header><h3>交付 D</h3><strong>20%</strong></header>
               <span className="qcds-owner">采购履约部评分</span>
               <p>{guideRule.items.filter(i => i.group === '交付').map(i => `${i.name} ${i.weight}%`).join('、')}。</p>
-              <p className="qcds-criterion">{guideRule.cap ? `${guideRule.items.find(i => i.id === guideRule.cap.itemId)?.name} ≤ ${guideRule.cap.threshold} 分时，个人交付分最高 ${guideRule.cap.max} 分。` : '各项分别评分，再按组内权重计算交付分。'}</p>
+              <p className="qcds-criterion">{guideRule.cap ? `${guideRule.items.find(i => i.id === guideRule.cap.itemId)?.name} ≤ ${ratingBandScore(guideRule.items.find(i => i.id === guideRule.cap.itemId), guideRule.cap.threshold)} 分时，个人交付分最高 ${guideRule.cap.max} 分。` : '各项分别评分，再按组内权重计算交付分。'}</p>
             </article>
             <article className="qcds-card qcds-owned">
               <header><h3>服务 S</h3><strong>10%</strong></header>
@@ -86,6 +86,7 @@ function App() {
         <section aria-label={systemPages.find(([id]) => id === activeSystem)?.[1]}>
           {activeSystem === 'records' && (bundle ? <Records key={month} bundle={bundle} user={user} perform={perform} busy={busy} /> : <Empty>请先开启月份并上传采购履约表。</Empty>)}
           {['manage', 'suppliers'].includes(activeSystem) && <Management key={`${activeSystem}/${month}`} view={activeSystem} onNavigate={navigate} bootstrap={bootstrap} bundle={bundle} month={month} perform={perform} busy={busy} />}
+          {activeSystem === 'rules' && <section className="panel"><h2>评价内容设置</h2><RulesEditor key={bootstrap.rule.id} rule={bootstrap.rule} perform={perform} busy={busy} /></section>}
           {activeSystem === 'users' && <Users perform={perform} busy={busy} revision={revision} user={user} onSelfChanged={logout} />}
           {activeSystem === 'history' && <History month={month} revision={revision} />}
         </section>
@@ -94,7 +95,6 @@ function App() {
     <footer>供应商评级 · 人工履约评价 · 日期按北京时间</footer></main>
     {password && <Modal title="修改密码" onClose={() => setPassword(false)}><Password onSaved={data => { logged(data); setPassword(false); }} /></Modal>}
     {details && <Modal title="个人评分明细" onClose={() => setDetails(null)}><ScoreDetails details={details} /></Modal>}
-    {rulesOpen && user.isAdmin && bootstrap && <Modal title="编辑标准与参考分档" className="rules-dialog" onClose={() => setRulesOpen(false)}><RulesEditor key={bootstrap.rule.id} rule={bootstrap.rule} perform={async (...args) => { const result = await perform(...args); if (result) setRulesOpen(false); return result; }} busy={busy} /></Modal>}
   </div></Feedback.Provider>;
 }
 function Brand() { return <div className="brand"><span className="brand-icon">S</span><div>供应商评级<small>SUPPLIER RATING</small></div></div>; }
@@ -177,11 +177,11 @@ function Users({ perform, busy, revision, user, onSelfChanged }) {
 function ScoreRules({ rule, currentMonth }) {
   const weighted = isWeightedRule(rule);
   return <section className="panel scoring-rules"><h2>评分规则 · {currentMonth ? '本月' : '最新'} V{rule.id}</h2>
-    <p className="muted">{weighted ? '交付分、服务分各100分；贡献分 = 交付分 × 20% + 服务分 × 10%，满分30。每项填整数，低于60分（百分制）须填写依据；参考区间之外的分数也可填写。' : '总分 100 分；A ≥ 90，B ≥ 80，C ≥ 70，D ＜ 70。每项按实际履约情况填写 0 至该项满分的整数；扣分须填写依据。'}</p>
-    {weighted && <><p className="muted">每月每项填一个分数；核实无相关事件可手动给满分，未知情况不能按满分处理。各评价人独立计算后取平均，暂不评综合等级。</p>{rule.cap && <p className="notice">{rule.items.find(i => i.id === rule.cap.itemId)?.name} ≤ {rule.cap.threshold} 分（百分制）时，个人交付分最高 {rule.cap.max} 分。</p>}</>}
+    <p className="muted">{weighted ? '交付分、服务分各100分；贡献分 = 交付分 × 20% + 服务分 × 10%，满分30。各项按满分填写，10 分制可保留一位小数；评分依据选填，参考区间之外的分数也可填写。' : '总分 100 分；A ≥ 90，B ≥ 80，C ≥ 70，D ＜ 70。每项按实际履约情况填写 0 至该项满分的整数；评分依据选填。'}</p>
+    {weighted && <><p className="muted">每月每项填一个分数；核实无相关事件可手动给满分，未知情况不能按满分处理。各评价人独立计算后取平均，暂不评综合等级。</p>{rule.cap && <p className="notice">{rule.items.find(i => i.id === rule.cap.itemId)?.name} ≤ {ratingBandScore(rule.items.find(i => i.id === rule.cap.itemId), rule.cap.threshold)} 分时，个人交付分最高 {rule.cap.max} 分。</p>}</>}
     <details open={weighted}><summary>查看 {rule.items.length} 项评分标准和参考分档</summary>
       {!weighted && <div className="rule-bands">{RATING_BANDS.map(([factor, label], n) => <span key={factor}>第{n + 1}档：{label}</span>)}</div>}
-      <div className="scroll"><table><thead><tr><th>维度</th><th>评分项目</th><th>满分</th>{weighted && <th>组内权重</th>}<th>评价标准</th><th>{weighted ? '参考区间（百分制）' : '参考分值'}</th></tr></thead><tbody>{rule.items.map(item => <tr key={item.id}><td>{item.group}</td><td>{item.name}</td><td>{item.max}</td>{weighted && <td>{item.weight}%</td>}<td className="rule-standard">{item.standard}</td><td className="reference-text">{ratingReferenceText(rule, item)}</td></tr>)}</tbody></table></div>
+      <div className="scroll"><table><thead><tr><th>维度</th><th>评分项目</th><th>满分</th>{weighted && <th>组内权重</th>}<th>评价标准</th><th>{weighted ? '参考区间（项目分值）' : '参考分值'}</th></tr></thead><tbody>{rule.items.map(item => <tr key={item.id}><td>{item.group}</td><td>{item.name}</td><td>{item.max}</td>{weighted && <td>{item.weight}%</td>}<td className="rule-standard">{item.standard}</td><td className="reference-text">{ratingReferenceText(rule, item)}</td></tr>)}</tbody></table></div>
     </details>
   </section>;
 }

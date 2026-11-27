@@ -9,7 +9,8 @@ import { DatabaseSync } from 'node:sqlite';
 import { openDatabase } from '../server/db.js';
 import { initAdmin } from '../server/auth.js';
 import { createApp } from '../server/app.js';
-import { RATING_ITEMS, QCDS_RULE, ratingGrade } from '../shared/rating.js';
+import { RATING_ITEMS, QCDS_RULE as TEN_POINT_RULE, ratingGrade } from '../shared/rating.js';
+const QCDS_RULE = { ...TEN_POINT_RULE, items: TEN_POINT_RULE.items.map(item => ({ ...item, max: 100 })) };
 import { parseRatingSuppliers, supplierTemplate } from '../server/rating-excel.js';
 import { parseAssignmentWorkbook } from '../server/rating-assignment-import.js';
 import { reviewSupplierNames } from '../shared/rating-supplier-match.js';
@@ -57,6 +58,31 @@ async function fixture(t) {
   const submit = (month, supplierId, session, factor = 1, revision = 0) => call(`/months/${month}/scores/${supplierId}`, { revision, status: 'submitted', scores: scores(factor), notes: Object.fromEntries(RATING_ITEMS.map(i => [i.id, '合成订单依据'])), verified: true }, 'PUT', session);
   return { db, ratingDb, origin, request, login, call, admin, user, supplier, assign, scores, submit };
 }
+test('10分制支持低分零分空依据，仍校验分数和核实状态，保留填写的依据', async t => {
+  const f = await fixture(t), a = await f.user('ten-point'), id = await f.supplier();
+  await f.call('/rules', { ...TEN_POINT_RULE, baseId: (await f.call('/bootstrap')).rule.id });
+  await f.call('/months', { month: '2026-11' }); await f.assign('2026-11', id, [a.user.id]);
+  const path = `/months/2026-11/scores/${id}`;
+  const body = { revision: 0, status: 'submitted', scores: Object.fromEntries(TEN_POINT_RULE.items.map(i => [i.id, 0])), notes: {}, verified: true };
+  for (const value of [null, -1, 10.1, 8.55, '8.5']) await f.call(path, { ...body, scores: { ...body.scores, urgent: value } }, 'PUT', a, 400);
+  await f.call(path, { ...body, verified: false }, 'PUT', a, 400);
+  await f.call(path, { ...body, notes: [] }, 'PUT', a, 400);
+  await f.call(path, { ...body, notes: { urgent: '字'.repeat(2001) } }, 'PUT', a, 400);
+  await f.call(path, body, 'PUT', a);
+  let view = await f.call('/months/2026-11', null, 'GET', a);
+  assert.equal(view.summaries[0].total, 0); assert.equal(view.scores[0].notes.urgent, '');
+  await f.call(path + '/withdraw', { revision: 1 }, 'POST', a);
+  const edited = { ...body, revision: 2, status: 'draft', scores: { ...body.scores, urgent: 8.5 }, notes: { urgent: '合成：急单按约处理' } };
+  await f.call(path, edited, 'PUT', a);
+  await f.call(path, { ...edited, revision: 3, status: 'submitted' }, 'PUT', a);
+  view = await f.call('/months/2026-11', null, 'GET', a);
+  assert.equal(view.scores[0].scores.urgent, 8.5); assert.equal(view.scores[0].notes.urgent, edited.notes.urgent);
+  const exported = await f.request(base + '/months/2026-11/export', { session: a });
+  const book = new ExcelJS.Workbook(); await book.xlsx.load(Buffer.from(exported.data));
+  assert.equal(valueAt(book.getWorksheet('个人评分'), '急单响应(10分)'), 8.5);
+  assert.match(valueAt(book.getWorksheet('个人评分'), '评分依据'), /合成：急单按约处理/);
+  assert.match(valueAt(book.getWorksheet('规则说明'), '参考区间(项目分值)'), /9—10分/);
+});
 test('D/S个人先封顶再平均，缺失规则令牌拒绝写入，新旧模型跨期分开', async t => {
   const f = await fixture(t), a = await f.user('ds-a'), b = await f.user('ds-b'), supplierId = await f.supplier();
   await f.call('/months', { month: '2026-10' }); await f.assign('2026-10', supplierId, [a.user.id]);
@@ -68,9 +94,9 @@ test('D/S个人先封顶再平均，缺失规则令牌拒绝写入，新旧模�
   const body = { revision: 0, status: 'submitted', scores: { ...full, urgent: 40 }, notes: {}, verified: true };
   assert.equal((await f.request(base + path, { session: a, method: 'PUT', body })).status, 409);
   await f.call(path, { ...body, ruleId: previous.id }, 'PUT', a, 409);
-  await f.call(path, body, 'PUT', a, 400);
-  await f.call(path, { ...body, scores: { ...full, urgent: 59 } }, 'PUT', a, 400);
-  await f.call(path, { ...body, scores: { ...full, urgent: 60 } }, 'PUT', a);
+  await f.call(path, { ...body, verified: false }, 'PUT', a, 400);
+  await f.call(path, { ...body, scores: { ...full, urgent: 59 } }, 'PUT', a);
+  assert.equal((await f.call('/months/2026-11', null, 'GET', a)).scores[0].notes.urgent, '');
   await f.call(path + '/withdraw', { revision: 1 }, 'POST', a);
   await f.call(path, { ...body, revision: 2, notes: { urgent: '合成急单未配合事实' } }, 'PUT', a);
   await f.call(path, { ...body, scores: full }, 'PUT', b);
@@ -148,10 +174,10 @@ test('评分验证、缺评、零分、个人明细权限、结月重开和历�
   await f.call('/months', { month: '2026-10' }); await f.assign('2026-10', id, [a.user.id, b.user.id]);
   const path = `/months/2026-10/scores/${id}`;
   await f.call(path, { revision: 0, scores: {}, notes: {}, verified: true, status: 'submitted' }, 'PUT', a, 400);
-  await f.call(path, { revision: 0, scores: f.scores(0), notes: {}, verified: true, status: 'submitted' }, 'PUT', a, 400);
+  await f.call(path, { revision: 0, scores: f.scores(0), notes: {}, verified: false, status: 'submitted' }, 'PUT', a, 400);
   await f.call(path, { revision: 0, scores: { ...f.scores(1), ontime: 41 }, notes: {}, verified: true, status: 'draft' }, 'PUT', a, 400);
   await f.call(path, { revision: 0, scores: f.scores(1), notes: {}, verified: true, status: 'submitted' }, 'PUT', outsider, 403);
-  await f.submit('2026-10', id, a, 0);
+  await f.call(path, { revision: 0, scores: f.scores(0), notes: {}, verified: true, status: 'submitted' }, 'PUT', a);
   let view = await f.call('/months/2026-10'); assert.equal(view.summaries[0].total, 0); assert.equal(view.summaries[0].count, 1); assert.equal(view.summaries[0].expected, 2);
   await f.call('/months/2026-10/close', { revision: 1 }, 'POST', f.admin, 400);
   await f.submit('2026-10', id, b);
@@ -207,7 +233,7 @@ test('规则五字段及新增删除持久化，评分和记录按月绑定，�
   await f.call('/months', { month: '2026-08', sourceMonth: '2026-07' });
   const august = '/months/2026-08/scores/' + id;
   const scores = Object.fromEntries(published.items.map(i => [i.id, i.id === 'custom_service' ? 0 : i.max]));
-  await f.call(august, { revision: 0, status: 'submitted', verified: true, scores, notes: {} }, 'PUT', a, 400);
+  await f.call(august, { revision: 0, status: 'submitted', verified: true, scores: { ...scores, custom_service: null }, notes: {} }, 'PUT', a, 400);
   await f.call(august, { revision: 0, status: 'submitted', verified: true, scores, notes: { custom_service: '合成测试：未响应加急需求' } }, 'PUT', a);
   const record = { revision: 0, month: '2026-08', supplierId: id, item: 'custom_service', issue: '合成新项目记录', state: '待处理' };
   await f.call('/records/' + randomUUID(), record, 'PUT', a);

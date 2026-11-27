@@ -1,10 +1,11 @@
 import express from 'express';
 import multer from 'multer';
 import { randomUUID } from 'node:crypto';
+import { migrateRatingToTenPoints } from './rating-ten-point-migration.js';
 import { createAuth } from './auth.js';
 import { transaction, audit, serializeAudit } from './db.js';
 import { runParser } from './parse-job.js';
-import { RATING_BASE, RATING_PERMISSIONS, ratingNeedsEvidence, validateRatingRule } from '../shared/rating.js';
+import { RATING_BASE, RATING_PERMISSIONS, validRatingScore, validateRatingRule } from '../shared/rating.js';
 import { initializeRating, fail, textValue, monthValue, now, decode, rules, monthRow, checkRevision, checkRule, assignment, history, monthBundle, dashboard, openMonth } from './rating-store.js';
 import { supplierTemplate, exportRating, exportRatingPeriod } from './rating-excel.js';
 import { prepareAssignmentImport, applyAssignmentImport } from './rating-assignment-import.js';
@@ -17,6 +18,7 @@ function exportResponse(res, name, buffer) { res.attachment(`${name}.xlsx`).type
 function supplierInput(input, before) { return { code: textValue(input.code ?? before?.code ?? `S${randomUUID()}`, '供应商标识', 80), name: textValue(input.name, '供应商名称', 200), active: input.active === undefined ? before ? !!before.active : true : input.active !== false }; }
 export function createRatingApi(db, { secureCookies = false, publicOrigin = '' } = {}) {
   initializeRating(db);
+  migrateRatingToTenPoints(db);
   const api = express.Router();
   const auth = createAuth(db, { secureCookies, basePath: RATING_BASE, apiPath: `${RATING_BASE}/api`, cookieName: 'gongyingshangpingji_session', permissions: RATING_PERMISSIONS });
   api.use((_req, res, next) => { res.set('Cache-Control', 'no-store'); next(); });
@@ -86,10 +88,10 @@ export function createRatingApi(db, { secureCookies = false, publicOrigin = '' }
     const values = {}, evidence = {};
     for (const item of items) {
       const value = scores[item.id];
-      if (value !== null && value !== undefined && (!Number.isInteger(value) || value < 0 || value > item.max)) throw fail(`${item.name}须为0至${item.max}的整数`);
+      if (value !== null && value !== undefined && !validRatingScore(rule, item, value)) throw fail(`${item.name}须为0至${item.max}分${rule.model === 'ds' && item.max === 10 ? '，最多一位小数' : '的整数'}`);
       values[item.id] = value ?? null;
       evidence[item.id] = textValue(notes[item.id] || '', `${item.name}依据`, 2000, false);
-      if (req.body.status === 'submitted' && (values[item.id] === null || (ratingNeedsEvidence(rule, item, values[item.id]) && !evidence[item.id]))) throw fail(`${item.name}未填写，或缺少所需评分依据`);
+      if (req.body.status === 'submitted' && values[item.id] === null) throw fail(`${item.name}未填写`);
     }
     if (req.body.status === 'submitted' && verified !== true) throw fail('请确认已核实当月业务和评分依据');
     const data = { scores: values, notes: evidence, verified: verified === true, raterName: req.user.displayName };
@@ -278,7 +280,7 @@ export function createRatingApi(db, { secureCookies = false, publicOrigin = '' }
   });
   api.get('/history', auth.requireAdmin, (req, res) => {
     const month = req.query.month ? monthValue(req.query.month) : '';
-    res.json({ items: db.prepare('SELECT h.id,h.month,h.supplier_id,h.action,h.created_at,u.display_name FROM rating_history h LEFT JOIN users u ON u.id=h.user_id WHERE (?=\'\' OR h.month=?) ORDER BY h.created_at DESC LIMIT 200').all(month, month) });
+    res.json({ items: db.prepare('SELECT h.id,h.month,h.supplier_id,h.action,h.created_at,COALESCE(u.display_name,\'系统升级\') display_name FROM rating_history h LEFT JOIN users u ON u.id=h.user_id WHERE (?=\'\' OR h.month=?) ORDER BY h.created_at DESC LIMIT 200').all(month, month) });
   });
   api.get('/logs', auth.requireAdmin, (_req, res) => res.json({ items: db.prepare('SELECT * FROM audit_logs ORDER BY created_at DESC LIMIT 100').all().map(serializeAudit) }));
   api.use((_req, _res, next) => next(fail('接口不存在', 404)));

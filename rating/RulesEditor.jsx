@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { api } from './api.js';
-import { RATING_BANDS, ratingReferences, isWeightedRule, validateRatingRule } from '../shared/rating.js';
+import { RATING_BANDS, ratingReferences, isWeightedRule, ratingBandScore, validateRatingRule } from '../shared/rating.js';
 import './scoring-weighted.css';
 
 const numberValue = value => value === '' ? null : Number(value);
@@ -41,7 +41,7 @@ export default function RulesEditor({ rule, perform, busy }) {
       return api('/rules', { method: 'POST', body: { baseId: rule.id, ...clean } });
     }, '新版本规则已发布，后续新开启月份生效'); }}>
       <fieldset className="rule-fields" disabled={busy}>
-        <div className="scroll"><table className={`rule-edit-table${weighted ? ' weighted-rule-table' : ''}`}><thead><tr><th>维度</th><th>项目</th><th>满分</th>{weighted && <th>组内权重 %</th>}<th>标准</th><th>{weighted ? '参考分档（百分制，从高到低）' : '参考分值（从高到低）'}</th><th>操作</th></tr></thead>
+        <div className="scroll"><table className={`rule-edit-table${weighted ? ' weighted-rule-table' : ''}`}><thead><tr><th>维度</th><th>项目</th><th>满分</th>{weighted && <th>组内权重 %</th>}<th>标准</th><th>{weighted ? '参考分档（项目分值，从高到低）' : '参考分值（从高到低）'}</th><th>操作</th></tr></thead>
           <tbody>{items.map((item, n) => <tr key={item.id} aria-label={`第${n + 1}项评分规则`}>
             <td>{weighted ? <select aria-label={`第${n + 1}项维度`} value={item.group} onChange={e => changeGroup(item, e.target.value)}><option value="交付">交付 D</option><option value="服务">服务 S</option></select> : <input aria-label={`第${n + 1}项维度`} required maxLength="50" value={item.group} onChange={e => edit(item.id, 'group', e.target.value)} />}</td>
             <td><input aria-label={`第${n + 1}项项目`} required maxLength="100" value={item.name} onChange={e => edit(item.id, 'name', e.target.value)} /></td>
@@ -50,17 +50,17 @@ export default function RulesEditor({ rule, perform, busy }) {
             <td><textarea aria-label={`第${n + 1}项标准`} required maxLength="2000" rows={weighted ? 4 : 2} value={item.standard} onChange={e => edit(item.id, 'standard', e.target.value)} /></td>
             <td>{weighted ? item.bands.map((band, index) => <div className="rule-reference-band" key={index}>
               <span>{index + 1}档</span>
-              <input aria-label={`第${n + 1}项第${index + 1}档最低分`} type="number" min="0" max="100" step="1" required value={band.min ?? ''} onChange={e => edit(item.id, 'bands', item.bands.map((b, j) => j === index ? { ...b, min: numberValue(e.target.value) } : b))} />
+              <input aria-label={`第${n + 1}项第${index + 1}档最低分`} type="number" min="0" max={item.max || 100} step={(item.max || 100) / 100} required value={band.min == null ? '' : ratingBandScore({ max: item.max || 100 }, band.min)} onChange={e => edit(item.id, 'bands', item.bands.map((b, j) => j === index ? { ...b, min: e.target.value === '' ? null : Math.round(Number(e.target.value) * 100 / (item.max || 100)) } : b))} />
               <span>至</span>
-              <input aria-label={`第${n + 1}项第${index + 1}档最高分`} type="number" min="0" max="100" step="1" required value={band.max ?? ''} onChange={e => edit(item.id, 'bands', item.bands.map((b, j) => j === index ? { ...b, max: numberValue(e.target.value) } : b))} />
+              <input aria-label={`第${n + 1}项第${index + 1}档最高分`} type="number" min="0" max={item.max || 100} step={(item.max || 100) / 100} required value={band.max == null ? '' : ratingBandScore({ max: item.max || 100 }, band.max)} onChange={e => edit(item.id, 'bands', item.bands.map((b, j) => j === index ? { ...b, max: e.target.value === '' ? null : Math.round(Number(e.target.value) * 100 / (item.max || 100)) } : b))} />
               <input aria-label={`第${n + 1}项第${index + 1}档说明`} type="text" required maxLength="500" placeholder="该档评价说明" value={band.label} onChange={e => edit(item.id, 'bands', item.bands.map((b, j) => j === index ? { ...b, label: e.target.value } : b))} />
             </div>) : <div className="reference-inputs">{item.references.map((value, index) => <input key={index} aria-label={`第${n + 1}项第${index + 1}档参考分值`} title={RATING_BANDS[index][1]} type="number" min="0" max={item.max ?? 100} step="1" required value={value ?? ''} onChange={e => edit(item.id, 'references', item.references.map((v, j) => j === index ? numberValue(e.target.value) : v))} />)}</div>}</td>
             <td><button type="button" disabled={items.length === 1} onClick={() => remove(item)}>删除此项</button></td>
           </tr>)}</tbody>
         </table></div>
         {weighted && <div className="rule-cap-setting"><label>交付封顶关联项目<select value={cap?.itemId || ''} onChange={e => selectCap(e.target.value)}><option value="">不启用封顶</option>{items.filter(i => i.group === '交付').map(i => <option key={i.id} value={i.id}>{i.name || '未命名项目'}</option>)}</select></label><p>{cap ? '关联项目折算百分制不超过40分时，个人交付分最高70分；再按已提交评价人数取平均。' : '此规则未启用急单低分封顶。选择一个交付项目可恢复封顶条件。'}</p></div>}
-        <div className="actions"><button type="button" disabled={items.length >= 100} onClick={() => setItems(current => [...current, weighted ? { id: crypto.randomUUID(), group: '交付', name: '', max: 100, weight: 5, standard: '', bands: blankBands() } : { id: crypto.randomUUID(), group: '', name: '', max: 5, standard: '', references: ratingReferences({ max: 5 }) }])}>新增评分项</button>{weighted ? <div className="rule-weight-totals"><strong>共 {items.length} 项</strong>{Object.entries(weights).map(([group, weight]) => <strong key={group} className={weight === 100 ? '' : 'rule-weight-invalid'}>{group}权重 {weight}% / 100%</strong>)}</div> : <strong>共 {items.length} 项 · 满分合计 {total} / 100</strong>}<button className="primary" disabled={!canPublish}>发布新版本</button></div>
-        <p className="muted">{weighted ? '交付、服务各自至少保留1项，组内权重分别合计100%。每项先按“得分÷满分×100”折算为百分制，再加权；参考分档、低分依据和封顶均按百分制判断。四档从高到低、不得重叠，可以留有间隔；间隔内分数仍可填写。' : '各项满分合计须为 100 分，至少保留 1 项。参考分值为 5 档，从高到低排列，可相同；每档须在 0 至该项满分之间。调整满分后请同步核对参考分值。'}</p>
+        <div className="actions"><button type="button" disabled={items.length >= 100} onClick={() => setItems(current => [...current, weighted ? { id: crypto.randomUUID(), group: '交付', name: '', max: 10, weight: 5, standard: '', bands: blankBands() } : { id: crypto.randomUUID(), group: '', name: '', max: 5, standard: '', references: ratingReferences({ max: 5 }) }])}>新增评分项</button>{weighted ? <div className="rule-weight-totals"><strong>共 {items.length} 项</strong>{Object.entries(weights).map(([group, weight]) => <strong key={group} className={weight === 100 ? '' : 'rule-weight-invalid'}>{group}权重 {weight}% / 100%</strong>)}</div> : <strong>共 {items.length} 项 · 满分合计 {total} / 100</strong>}<button className="primary" disabled={!canPublish}>发布新版本</button></div>
+        <p className="muted">{weighted ? '交付、服务各自至少保留1项，组内权重分别合计100%。每项先按“得分÷满分×100”折算为百分制，再加权；参考分档按各项目满分填写，封顶按折算后的百分制判断。四档从高到低、不得重叠，可以留有间隔；间隔内分数仍可填写。' : '各项满分合计须为 100 分，至少保留 1 项。参考分值为 5 档，从高到低排列，可相同；每档须在 0 至该项满分之间。调整满分后请同步核对参考分值。'}</p>
       </fieldset>
     </form>
   </div>;

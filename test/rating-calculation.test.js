@@ -1,9 +1,23 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { QCDS_RULE, RATING_ITEMS, calculateRating, normalizeRatingScore, ratingGrade, ratingNeedsEvidence, ratingReferenceText, validateRatingRule } from '../shared/rating.js';
+import { QCDS_RULE as TEN_POINT_RULE, RATING_ITEMS, calculateRating, normalizeRatingScore, ratingGrade, ratingReferenceText, validateRatingRule } from '../shared/rating.js';
+const QCDS_RULE = { ...TEN_POINT_RULE, items: TEN_POINT_RULE.items.map(item => ({ ...item, max: 100 })) };
 
 const filled = (rule = QCDS_RULE, value) => Object.fromEntries(rule.items.map(item => [item.id, value ?? item.max]));
 const copyRule = () => structuredClone(QCDS_RULE);
+
+test('10分制默认、参考分档和百分制等值，允许一位小数且保留急单封顶', () => {
+  assert.ok(TEN_POINT_RULE.items.every(item => item.max === 10));
+  const scores = { delivery_ontime: 8.5, delivery_quantity: 7.6, urgent: 4, after_sales: 0, rectification: 9.1, coordination: 8, cooperation: 10 };
+  const result = calculateRating(TEN_POINT_RULE, scores);
+  const old = calculateRating(QCDS_RULE, Object.fromEntries(Object.entries(scores).map(([id, value]) => [id, Math.round(value * 10)])));
+  assert.equal(result.complete, true); assert.deepEqual(result.groups, old.groups); assert.equal(result.total, old.total);
+  assert.equal(result.capApplied, true);
+  assert.equal(calculateRating(TEN_POINT_RULE, { ...scores, urgent: 4.1 }).capApplied, false);
+  assert.match(ratingReferenceText(TEN_POINT_RULE, TEN_POINT_RULE.items[0]), /9—10分/);
+  assert.match(ratingReferenceText(TEN_POINT_RULE, TEN_POINT_RULE.items[0]), /7.5—8.9分/);
+  for (const value of [-0.1, 10.1, 8.55, '', null, '8.5', NaN, Infinity]) assert.equal(calculateRating(TEN_POINT_RULE, { ...scores, urgent: value }).complete, false);
+});
 
 test('七项按组加权，D/S各100分、贡献满分30，售后零分不扣光整个服务项', () => {
   const full = calculateRating(QCDS_RULE, filled());
@@ -49,41 +63,32 @@ test('零分有效，空白或非法输入不生成总分，单个完整维度�
   assert.equal(calculateRating(null).complete, false);
 });
 
-test('评分依据以百分制60为边界；允许参考分档间隙的整数', () => {
+test('允许参考分档间隙的整数', () => {
   const urgent = QCDS_RULE.items.find(i => i.id === 'urgent');
-  assert.equal(ratingNeedsEvidence(QCDS_RULE, urgent, 59), true);
-  assert.equal(ratingNeedsEvidence(QCDS_RULE, urgent, 60), false);
-  assert.equal(ratingNeedsEvidence(QCDS_RULE, urgent, 100), false);
-  assert.equal(ratingNeedsEvidence(QCDS_RULE, urgent, null), false);
-  assert.equal(ratingNeedsEvidence(QCDS_RULE, urgent, 0), true);
   assert.equal(calculateRating(QCDS_RULE, { ...filled(), urgent: 59, after_sales: 1 }).complete, true);
   assert.match(ratingReferenceText(QCDS_RULE, urgent), /0—40分：装死、不配合/);
   assert.match(ratingReferenceText(QCDS_RULE, QCDS_RULE.items.find(i => i.id === 'after_sales')), /0分：电话不接、微信不回、推卸责任/);
 });
 
-test('管理员调整满分后仍先折算百分制再判依据和封顶，不提前舍入', () => {
+test('管理员调整满分后仍先折算百分制再判封顶，不提前舍入', () => {
   const rule = copyRule(); rule.items.find(i => i.id === 'urgent').max = 50;
   const urgent = rule.items.find(i => i.id === 'urgent');
   assert.equal(normalizeRatingScore(urgent, 20), 40);
   assert.equal(normalizeRatingScore(urgent, 20.5), 41);
   assert.equal(normalizeRatingScore(urgent, 51), null);
   assert.equal(normalizeRatingScore(urgent, null), null);
-  assert.equal(ratingNeedsEvidence(rule, urgent, 29), true);
-  assert.equal(ratingNeedsEvidence(rule, urgent, 30), false);
   assert.equal(calculateRating(rule, { ...filled(rule), urgent: 20 }).groups['交付'], 70);
   assert.equal(calculateRating(rule, { ...filled(rule), urgent: 21 }).groups['交付'], 88.4);
   assert.equal(calculateRating(rule, filled(rule)).totalRaw, 30);
 });
 
-test('旧规则保持原项目加和、五档参考、等级及依据要求', () => {
+test('旧规则保持原项目加和、五档参考、等级', () => {
   const rule = { items: RATING_ITEMS };
   const full = calculateRating(rule, filled(rule));
   assert.equal(full.totalRaw, 100); assert.equal(full.grade, 'A'); assert.equal(full.totalMax, 100); assert.equal(full.model, 'legacy');
   assert.deepEqual(full.groups, { 交期: 50, 数量: 30, 配合: 20 });
   const scores = { ...filled(rule), ontime: 29 };
   assert.equal(calculateRating(rule, scores).totalRaw, 89); assert.equal(calculateRating(rule, scores).grade, 'B');
-  assert.equal(ratingNeedsEvidence(rule, RATING_ITEMS[0], 39), true);
-  assert.equal(ratingNeedsEvidence(rule, RATING_ITEMS[0], 40), false);
   assert.equal(ratingReferenceText(rule, RATING_ITEMS[0]), '40 / 32 / 24 / 16 / 0');
   const clean = validateRatingRule({ baseId: 1, ...rule });
   assert.deepEqual(Object.keys(clean), ['items']);

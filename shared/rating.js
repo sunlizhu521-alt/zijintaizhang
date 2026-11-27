@@ -24,13 +24,13 @@ const bands = (labels, lowestMax = 59) => [[90, 100], [75, 89], [60, 74], [0, lo
 export const QCDS_RULE = {
   model: 'ds', evidenceBelow: 60, cap: { itemId: 'urgent', threshold: 40, max: 70 },
   items: [
-    { id: 'delivery_ontime', group: '交付', name: '按期交付率', max: 100, weight: 50, standard: '凭感觉打：货按约定交期到了吗？', bands: bands(['基本都按期，偶尔小延误', '大部分按期，少数延误', '一半按期，延误不少', '经常延误、交期没谱']) },
-    { id: 'delivery_quantity', group: '交付', name: '发货数量满足率', max: 100, weight: 30, standard: '凭感觉打：每次发货需求给到供应商，能及时发齐吗？', bands: bands(['基本都能及时发齐', '大部分能及时发齐，偶尔短交', '有时发不齐、要催几次', '经常短交、不及时']) },
-    { id: 'urgent', group: '交付', name: '急单响应', max: 100, weight: 20, standard: '凭感觉打：有急单，配合吗？', bands: bands(['急单都按时办', '大部分急单能办', '正常单配合、急单勉强', '装死、不配合'], 40) },
-    { id: 'after_sales', group: '服务', name: '售后响应时效', max: 100, weight: 30, standard: '凭感觉打：出了问题，联系得上吗？', bands: bands(['随时能联系、及时处理', '基本能联系上', '要催几次才回', '电话不接、微信不回、推卸责任'], 0) },
-    { id: 'rectification', group: '服务', name: '异常处理与整改', max: 100, weight: 25, standard: '按次打：质量或交期异常，整改到位吗？结合当月发生次数和表现，每月填写一个分数。', bands: bands(['主动出整改报告、闭环快', '按期出报告、能整改', '要催才出、整改慢', '逾期不出、同类问题反复']) },
-    { id: 'coordination', group: '服务', name: '订单协同反馈', max: 100, weight: 25, standard: '按次打：订单进度、风险，主动说吗？结合当月发生次数和表现，每月填写一个分数。', bands: bands(['主动报进度、提前预警', '问了能及时回', '要催才回', '该报不报、对账拖延']) },
-    { id: 'cooperation', group: '服务', name: '配合程度', max: 100, weight: 20, standard: '按次打：合同回传、盖章、单据，配合吗？结合当月发生次数和表现，每月填写一个分数。', bands: bands(['都主动配合', '基本配合', '要催才办', '拖延、推诿']) },
+    { id: 'delivery_ontime', group: '交付', name: '按期交付率', max: 10, weight: 50, standard: '凭感觉打：货按约定交期到了吗？', bands: bands(['基本都按期，偶尔小延误', '大部分按期，少数延误', '一半按期，延误不少', '经常延误、交期没谱']) },
+    { id: 'delivery_quantity', group: '交付', name: '发货数量满足率', max: 10, weight: 30, standard: '凭感觉打：每次发货需求给到供应商，能及时发齐吗？', bands: bands(['基本都能及时发齐', '大部分能及时发齐，偶尔短交', '有时发不齐、要催几次', '经常短交、不及时']) },
+    { id: 'urgent', group: '交付', name: '急单响应', max: 10, weight: 20, standard: '凭感觉打：有急单，配合吗？', bands: bands(['急单都按时办', '大部分急单能办', '正常单配合、急单勉强', '装死、不配合'], 40) },
+    { id: 'after_sales', group: '服务', name: '售后响应时效', max: 10, weight: 30, standard: '凭感觉打：出了问题，联系得上吗？', bands: bands(['随时能联系、及时处理', '基本能联系上', '要催几次才回', '电话不接、微信不回、推卸责任'], 0) },
+    { id: 'rectification', group: '服务', name: '异常处理与整改', max: 10, weight: 25, standard: '按次打：质量或交期异常，整改到位吗？结合当月发生次数和表现，每月填写一个分数。', bands: bands(['主动出整改报告、闭环快', '按期出报告、能整改', '要催才出、整改慢', '逾期不出、同类问题反复']) },
+    { id: 'coordination', group: '服务', name: '订单协同反馈', max: 10, weight: 25, standard: '按次打：订单进度、风险，主动说吗？结合当月发生次数和表现，每月填写一个分数。', bands: bands(['主动报进度、提前预警', '问了能及时回', '要催才回', '该报不报、对账拖延']) },
+    { id: 'cooperation', group: '服务', name: '配合程度', max: 10, weight: 20, standard: '按次打：合同回传、盖章、单据，配合吗？结合当月发生次数和表现，每月填写一个分数。', bands: bands(['都主动配合', '基本配合', '要催才办', '拖延、推诿']) },
   ],
 };
 
@@ -39,16 +39,17 @@ export const isWeightedRule = rule => ratingModel(rule) === 'ds';
 export function normalizeRatingScore(item, value) {
   return Number.isFinite(value) && Number.isFinite(item?.max) && item.max > 0 && value >= 0 && value <= item.max ? value * 100 / item.max : null;
 }
-export function ratingNeedsEvidence(rule, item, value) {
-  const score = normalizeRatingScore(item, value);
-  return score !== null && (isWeightedRule(rule) ? score < rule.evidenceBelow : value < item.max);
+export function validRatingScore(rule, item, value) {
+  const units = isWeightedRule(rule) && item.max === 10 ? 10 : 1;
+  return Number.isFinite(value) && value >= 0 && value <= item.max && Math.abs(value * units - Math.round(value * units)) < 1e-9;
 }
+export const ratingBandScore = (item, value) => Math.round(value * item.max) / 100;
 export function ratingReferenceText(rule, item) {
-  return isWeightedRule(rule) ? (item.bands || []).map(b => `${b.min === b.max ? b.min : `${b.min}—${b.max}`}分：${b.label}`).join('\n') : ratingReferences(item).join(' / ');
+  return isWeightedRule(rule) ? (item.bands || []).map(b => `${b.min === b.max ? ratingBandScore(item, b.min) : `${ratingBandScore(item, b.min)}—${ratingBandScore(item, b.max)}`}分：${b.label}`).join('\n') : ratingReferences(item).join(' / ');
 }
 export function calculateRating(rule, scores = {}) {
   const items = rule?.items || [], model = ratingModel(rule), weighted = model === 'ds';
-  const normalizedScores = Object.fromEntries(items.map(i => [i.id, Number.isInteger(scores?.[i.id]) ? normalizeRatingScore(i, scores[i.id]) : null]));
+  const normalizedScores = Object.fromEntries(items.map(i => [i.id, validRatingScore(rule, i, scores?.[i.id]) ? normalizeRatingScore(i, scores[i.id]) : null]));
   const complete = items.length > 0 && items.every(i => normalizedScores[i.id] !== null);
   const groups = Object.fromEntries([...new Set(items.map(i => i.group))].map(group => {
     const members = items.filter(i => i.group === group);
